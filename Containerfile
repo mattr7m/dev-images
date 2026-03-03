@@ -2,7 +2,7 @@
 # tools-udi: base red hat udi image with additional tools
 #----------------------------------------------------------
 
-FROM registry.redhat.io/devspaces/udi-rhel9@sha256:bb5baa05f316944ca6df56ad718c368b248e8f4b2488551549b1b13c4ed5844b
+FROM quay.io/devspaces/udi-rhel9:latest
 
 LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 
