@@ -1,0 +1,106 @@
+#----------------------------------------------------------
+# tools-udi: base red hat udi image with additional tools
+#----------------------------------------------------------
+
+FROM registry.redhat.io/devspaces/udi-rhel9@sha256:bb5baa05f316944ca6df56ad718c368b248e8f4b2488551549b1b13c4ed5844b
+
+LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
+
+LABEL org.opencontainers.image.source="https://github.com/mattr7m/eclipse-che-vscode-tunnel.git"
+
+ARG ARGO_VERSION="3.3.0"
+ARG GH_VERSION="2.86.0"
+ARG ROXCTL_VERSION="4.9.2"
+ARG KUBESEAL_VERSION="0.34.0"
+ARG KUSTOMIZE_VERSION="5.8.1"
+
+USER 0
+
+# Install argocd CLI
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then export ARCH="amd64"; fi \
+    && curl -SL -o /tmp/argocd-linux-${ARCH} https://github.com/argoproj/argo-cd/releases/${ARGO_VERSION}/download/argocd-linux-${ARCH} \
+    && install -m 555 /tmp/argocd-linux-${ARCH} /usr/local/bin/argocd \
+    && rm -rf /tmp/argocd-linux-${ARCH}
+
+# Install gh CLI
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then export ARCH="amd64"; fi \
+    && echo "Pulling: curl -o /tmp/gh_${GH_VERSION}_linux_${ARCH}.tar.gz -L https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
+    && curl -o /tmp/gh_${GH_VERSION}_linux_${ARCH}.tar.gz -L https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz \
+    && tar -xvf /tmp/gh_${GH_VERSION}_linux_${ARCH}.tar.gz -C /tmp \
+    && chmod +x /tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh \
+    && mv /tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh /usr/local/bin/gh \
+    && rm -rf /tmp/gh_${GH_VERSION}_linux_*
+
+# Install roxctl CLI
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then curl -L -f -o /tmp/roxctl https://mirror.openshift.com/pub/rhacs/assets/${ROXCTL_VERSION}/bin/Linux/roxctl; fi \
+    && if [[ "$(uname -m)" = "s390x" ]] ; then curl -L -f -o /tmp/roxctl https://mirror.openshift.com/pub/rhacs/assets/${ROXCTL_VERSION}/bin/Linux/roxctl-s390x; fi \
+    && chmod +x /tmp/roxctl \
+    && mv /tmp/roxctl /usr/local/bin/roxctl \
+    && rm -f /tmp/roxctl
+
+# Install kubeseal CLI
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then export ARCH="amd64"; fi \
+    && echo "Pulling: curl -SL -o /tmp/kubeseal-${KUBESEAL_VERSION}-linux-${ARCH}.tar.gz 'https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-${ARCH}.tar.gz'" \
+    && curl -SL -o /tmp/kubeseal-${KUBESEAL_VERSION}-linux-${ARCH}.tar.gz "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-${ARCH}.tar.gz" \
+    && tar -xvzf /tmp/kubeseal-${KUBESEAL_VERSION}-linux-${ARCH}.tar.gz -C /tmp \
+    && install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal \
+    && rm -rf /tmp/kubese*
+
+
+# Install kustomize CLI
+# https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then export ARCH="amd64"; fi \
+    && echo "Pulling: curl -SL -o /tmp/kustomize_v${KUSTOMIZE_VERSION}_linux_${ARCH}.tar.gz 'https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz'" \
+    && curl -SL -o /tmp/kustomize_v${KUSTOMIZE_VERSION}_linux_${ARCH}.tar.gz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+    && ls -lt /tmp \
+    && tar -xvzf /tmp/kustomize_v${KUSTOMIZE_VERSION}_linux_${ARCH}.tar.gz -C /tmp \
+    && install -m 755 /tmp/kustomize /usr/local/bin/kustomize \
+    && rm -rf /tmp/kustomize*
+
+# Install yq
+RUN curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && \
+    rm /home/user/.local/bin/yq && \
+    ln -s /usr/bin/yq  /usr/share/Modules/bin
+
+# Install dnf packages
+RUN    dnf -y makecache \
+    && dnf -y update    \
+    && dnf -y install   \
+              openldap-clients \ 
+              pinentry  \
+              python3   \
+              python3-pip \
+    && dnf -y clean all
+
+# install colordiff
+RUN curl -o /usr/local/bin/colordiff https://raw.githubusercontent.com/daveewart/colordiff/master/colordiff.pl && \
+    chmod +x /usr/local/bin/colordiff    
+
+# Switch to python3.11
+RUN python --version
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 2
+RUN update-alternatives --set python3 /usr/bin/python3.11
+RUN python --version
+
+# Install ansible
+RUN pip install ansible
+
+# Install requirements for tunnel-log-watch.py
+COPY ./requirements.txt /usr/local/sbin/
+COPY ./tunnel-log-watch.py /usr/local/sbin/
+RUN pip install -r /usr/local/sbin/requirements.txt
+
+# Install VSCode CLI (tunnel server)
+RUN curl 'https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64' --location -o /tmp/code.tar.gz && \
+    tar -xvzf /tmp/code.tar.gz --directory=/usr/local/bin
+
+# Set the default command for the resulting image
+ENV HOME=/home/user
+ENTRYPOINT [ "/entrypoint.sh" ]
+WORKDIR /projects
+CMD tail -f /dev/null
