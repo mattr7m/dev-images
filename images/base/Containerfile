@@ -13,6 +13,7 @@ ARG GH_VERSION="2.86.0"
 ARG ROXCTL_VERSION="4.9.2"
 ARG KUBESEAL_VERSION="0.34.0"
 ARG KUSTOMIZE_VERSION="5.8.1"
+ARG KUBECOLOR_VERSION="0.5.3"
 
 USER 0
 
@@ -50,7 +51,6 @@ RUN export ARCH=$(uname -m) \
     && install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal \
     && rm -rf /tmp/kubese*
 
-
 # Install kustomize CLI
 # https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz
 RUN export ARCH=$(uname -m) \
@@ -61,6 +61,16 @@ RUN export ARCH=$(uname -m) \
     && tar -xvzf /tmp/kustomize_v${KUSTOMIZE_VERSION}_linux_${ARCH}.tar.gz -C /tmp \
     && install -m 755 /tmp/kustomize /usr/local/bin/kustomize \
     && rm -rf /tmp/kustomize*
+
+# Install kubecolor
+# https://github.com/kubecolor/kubecolor/releases/download/v0.5.3/kubecolor_0.5.3_linux_amd64.tar.gz
+RUN export ARCH=$(uname -m) \
+    && if [[ "$(uname -m)" = "x86_64" ]] ; then export ARCH="amd64"; fi \
+    && echo "Pulling: curl -SL -o /tmp/kubecolor-${KUBECOLOR_VERSION}-linux-${ARCH}.tar.gz 'https://github.com/kubecolor/kubecolor/releases/download/v${KUBECOLOR_VERSION}/kubecolor_${KUBECOLOR_VERSION}_linux_${ARCH}.tar.gz'" \
+    && curl -SL -o /tmp/kubecolor_${KUBECOLOR_VERSION}_linux_${ARCH}.tar.gz "https://github.com/kubecolor/kubecolor/releases/download/v${KUBECOLOR_VERSION}/kubecolor_${KUBECOLOR_VERSION}_linux_${ARCH}.tar.gz" \
+    && tar -xvzf /tmp/kubecolor_${KUBECOLOR_VERSION}_linux_${ARCH}.tar.gz -C /tmp \
+    && install -m 755 /tmp/kubecolor /usr/local/bin/kubecolor \
+    && rm -rf /tmp/kubecolor*
 
 # Install yq
 RUN curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && \
