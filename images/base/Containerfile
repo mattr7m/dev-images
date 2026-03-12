@@ -6,7 +6,7 @@ FROM registry.redhat.io/devspaces/udi-rhel9@sha256:bb5baa05f316944ca6df56ad718c3
 
 LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 
-LABEL org.opencontainers.image.source="https://github.com/mattr7m/eclipse-che-vscode-tunnel.git"
+LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images.git"
 
 ARG ARGO_VERSION="3.3.0"
 ARG GH_VERSION="2.86.0"
