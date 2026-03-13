@@ -9,7 +9,10 @@ import subprocess
 import json
 import requests
 
-debug = 1
+try:
+    debug = int(os.environ['DEBUG'])
+except:
+    debug = 1
 
 try:
     email = os.environ['DEV_EMAIL']
@@ -32,7 +35,7 @@ except:
         print("==> NOTE: COULD NOT DETERMINE VALUE OF START_DEV_TUNNEL ENVIRONMENT VARIABLE")
         print("==> ")
         sys.exit()
-     
+
 startDevTunnel = ast.literal_eval(startDevTunnelT)
 
 try:
@@ -43,12 +46,44 @@ except:
         print("==> NOTE: COULD NOT DETERMINE VALUE OF DEVWORKSPACE_NAME ENVIRONMENT VARIABLE")
         print("==> ")
 
+try:
+    emailApiUrl = os.environ['EMAIL_API_URL']
+except:
+    if debug == 1:
+        print("==> ")
+        print("==> NOTE: COULD NOT DETERMINE VALUE OF EMAIL_API_URL ENVIRONMENT VARIABLE")
+        print("==> ")
+        sys.exit()
+
+try:
+    replyToUser = os.environ['REPLY_TO_USER']
+except:
+    if debug == 1:
+        print("==> ")
+        print("==> NOTE: COULD NOT DETERMINE VALUE OF REPLY_TO_USER ENVIRONMENT VARIABLE")
+        print("==> ")
+        sys.exit()
+
+try:
+    replyToDomain = os.environ['REPLY_TO_DOMAIN']
+except:
+    if debug == 1:
+        print("==> ")
+        print("==> NOTE: COULD NOT DETERMINE VALUE OF REPLY_TO_DOMAIN ENVIRONMENT VARIABLE")
+        print("==> ")
+        sys.exit()
+
+try:
+    logWatchPath = os.environ['LOG_WATCH_PATH']
+except:
+    logWatchPath = '/tmp/log-watch-test/'
+
 class LogFileChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.src_path.endswith('curr.log'):
             print(f'Log file {event.src_path} has been modified.')
             diff = ""
-            diff = get_diff(path, curr_log, last_log)
+            diff = get_diff(logWatchPath, curr_log, last_log)
             if(diff):
                 process_diff(diff)
 
@@ -63,8 +98,6 @@ def process_diff(diff):
     messageParts = message.split(' ')
     if result.returncode == 0 :
         print(f"### sending code to {emailUser} @ {emailDomain} ###")        
-        url = 'http://api.tr5k.net/email'    
-        
         data = {
             "body": f"""
                 <html>
@@ -78,15 +111,15 @@ def process_diff(diff):
                 }
             ],
             "subject": f"Devspaces - Authenticate code tunnel request for workspace {devWsName}",
-            "replyToUser":"noreply",
-            "replyToDomain":"tr5k.net"
+            "replyToUser":replyToUser,
+            "replyToDomain":replyToDomain
         }
         header = {
             'Content-Type': 'application/json'
         }
         print(data)
         dataSend = json.dumps(data)
-        response = requests.post(url, data=dataSend, headers=header)
+        response = requests.post(emailApiUrl, data=dataSend, headers=header)
         print(response.text)                
     print("-----------------------------")
 
@@ -139,15 +172,14 @@ if __name__ == "__main__":
         print("START_DEV_TUNNEL is False - do not start tunnel-log-watch")
         sys.exit()
         
-    path = '/tmp/log-watch-test/'
     curr_log = 'curr.log'
     last_log = 'last.log'
 
-    init_last_log(path, last_log)
+    init_last_log(logWatchPath, last_log)
 
     diff = ""
-    diff = get_diff(path, curr_log, last_log)
+    diff = get_diff(logWatchPath, curr_log, last_log)
     if(diff):
         process_diff(diff)
 
-    watch_log_folder(path)
+    watch_log_folder(logWatchPath)

@@ -2,7 +2,7 @@
 # tools-udi: base red hat udi image with additional tools
 #----------------------------------------------------------
 
-FROM registry.redhat.io/devspaces/udi-rhel9@sha256:bb5baa05f316944ca6df56ad718c368b248e8f4b2488551549b1b13c4ed5844b
+FROM quay.io/devfile/universal-developer-image:ubi9-e420701
 
 LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 
@@ -74,7 +74,7 @@ RUN export ARCH=$(uname -m) \
 
 # Install yq
 RUN curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && \
-    rm /home/user/.local/bin/yq && \
+    rm -f /home/user/.local/bin/yq && \
     ln -s /usr/bin/yq  /usr/share/Modules/bin
 
 # Install dnf packages
@@ -101,8 +101,8 @@ RUN python --version
 RUN pip install ansible
 
 # Install requirements for tunnel-log-watch.py
-COPY ./requirements.txt /usr/local/sbin/
-COPY ./tunnel-log-watch.py /usr/local/sbin/
+COPY ./scripts/requirements.txt /usr/local/sbin/
+COPY ./scripts/tunnel-log-watch.py /usr/local/sbin/
 RUN pip install -r /usr/local/sbin/requirements.txt
 
 # Install VSCode CLI (tunnel server)
