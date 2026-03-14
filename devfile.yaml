@@ -11,7 +11,7 @@ projects:
 components:
   - name: universal-developer-image
     container:
-      image: ghcr.io/mattr7m/udi-tools:v0.1.0-p1
+      image: ghcr.io/mattr7m/udi-tools:v0.1.0-p2
       env:
         - name: DEV_EMAIL
           value: m@tr5.net
