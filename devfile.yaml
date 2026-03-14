@@ -1,0 +1,101 @@
+schemaVersion: 2.3.0
+metadata:
+  name: dev-images
+projects:
+  - name: dev-images
+    git:
+      remotes:
+        origin: https://github.com/mattr7m/dev-images.git
+      checkoutFrom:
+        revision: main
+components:
+  - name: universal-developer-image
+    container:
+      image: ghcr.io/mattr7m/udi-tools:v0.1.0-p1
+      env:
+        - name: DEV_EMAIL
+          value: m@tr5.net
+        - name: START_DEV_TUNNEL
+          value: 'true'
+        - name: DEVWORKSPACE_NAME
+          value: dev-images
+        - name: REPLY_TO_USER
+          value: notify
+        - name: REPLY_TO_DOMAIN
+          value: tr5k.net
+        - name: EMAIL_API_URL
+          value: http://192.168.100.119:8002
+        - name: TUNNEL_PROVIDER
+          value: github
+    attributes:
+      pod-overrides: # https://developers.redhat.com/articles/2024/12/02/enable-nested-containers-openshift-dev-spaces-user-namespaces#implementation__enabling_user_namespaces_in_red_hat_openshift
+        metadata:
+          annotations:
+            io.kubernetes.cri-o.Devices: "/dev/fuse"
+commands:
+  # ===== GENERAL =====================================================================
+  ## Standard set up for devspaces
+  - id: 00-setup-remove-default-yq
+    exec:
+      label: "00 - SETUP - Remove default yq"
+      component: universal-developer-image
+      workingDir: ${PROJECTS_ROOT}/
+      commandLine: |
+        rm -f /home/user/.local/bin/yq
+  - id: 05-setup-start-tunnel-log-watch
+    exec:
+      label: "05 - SETUP - Start tunnel log watcher"
+      component: universal-developer-image
+      workingDir: ${PROJECTS_ROOT}/
+      commandLine: |
+        mkdir -p /tmp/log-watch-test && \
+        touch /tmp/log-watch-test/curr.log && \
+        python /usr/local/sbin/tunnel-log-watch.py &
+
+  # Example of how to login to the tunnel with both github and microsoft providers. The tunnel log watcher will watch for the successful login and then start the tunnel for remote VSCode development.
+  # Note: The tunnel log watcher is necessary because the tunnel command needs to be run after the successful login, but the login process is interactive and can take some time. By watching the logs for the successful login, we can ensure that the tunnel command is only run after the login is complete.
+  # Github login example:
+  # user@computer:/projects$ /usr/local/bin/code tunnel user login --provider github
+  # To grant access to the server, please log into https://github.com/login/device and use code E8C3-4D28
+  #
+  # Microsoft login example:
+  # user@computer:/projects$ /usr/local/bin/code tunnel user login --provider microsoft
+  # To sign in, use a web browser to open the page https://login.microsoft.com/device and enter the code BPRE4PCZE to authenticate.        
+  - id: 10-setup-run-tunnel
+    exec:
+      label: "10 - SETUP - Run tunnel for remote VSCode development"
+      component: universal-developer-image
+      workingDir: ${PROJECTS_ROOT}/
+      commandLine: |
+        mkdir -p /tmp/log-watch-test && \
+        rm -f /tmp/log-watch-test/curr.log && \
+        touch /tmp/log-watch-test/curr.log && \
+        PROVIDER="${TUNNEL_PROVIDER:-github}" && \
+        if [ "$START_DEV_TUNNEL" == "true" ]; then stdbuf -o0 /usr/local/bin/code tunnel user login --provider "$PROVIDER" | tee -a /tmp/log-watch-test/curr.log && \
+        /usr/local/bin/code tunnel --no-sleep --accept-server-license-terms --name $DEVWORKSPACE_NAME & fi
+  - id: 15-setup-run-user-scripts
+    exec:
+      label: "15 - SETUP - Run user scripts"
+      component: universal-developer-image
+      workingDir: ${PROJECTS_ROOT}/
+      commandLine: |
+        SRC="/home/user/.local/startup.sh"
+        TRG="/tmp/startup.sh"
+
+        if [ -f "$SRC" ]; then
+            echo "$SRC exists. Copying to /tmp..."
+            cp $SRC $TRG
+            echo "Add execute permissions..."
+            chmod +x $TRG
+            echo "Executing..."
+            "$TRG"
+        else
+            echo "$SRC does not exist. Skipping execution."
+        fi
+  #====================================================================================
+events:
+  postStart:
+    - 00-setup-remove-default-yq
+    - 05-setup-start-tunnel-log-watch
+    - 10-setup-run-tunnel
+    - 15-setup-run-user-scripts        

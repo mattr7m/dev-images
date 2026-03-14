@@ -1,11 +1,10 @@
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import time
-import ast
 import os
 import sys
 import shutil
-import subprocess
+import re
 import json
 import requests
 
@@ -36,7 +35,7 @@ except:
         print("==> ")
         sys.exit()
 
-startDevTunnel = ast.literal_eval(startDevTunnelT)
+startDevTunnel = startDevTunnelT.lower() in ('true', '1', 'yes')
 
 try:
     devWsName = os.environ['DEVWORKSPACE_NAME']
@@ -91,17 +90,23 @@ def process_diff(diff):
     print("-----------------------------")
     print("the difference is: ")
     print(diff)
-    result = subprocess.run(f"echo {diff} | grep 'enter the code'", capture_output=True, text=True, shell=True)  
-    print(f"grep result: {result.returncode}")
     message = diff[0]
     print(f"log message: {message}")
-    messageParts = message.split(' ')
-    if result.returncode == 0 :
-        print(f"### sending code to {emailUser} @ {emailDomain} ###")        
+
+    # Match both GitHub and Microsoft auth messages:
+    #   GitHub:    "...log into https://github.com/login/device and use code E8C3-4D28"
+    #   Microsoft: "...open the page https://login.microsoft.com/device and enter the code BPRE4PCZE to authenticate."
+    url_match = re.search(r'(https?://\S+)', message)
+    code_match = re.search(r'code\s+(\S+)', message)
+
+    if url_match and code_match:
+        auth_url = url_match.group(1)
+        auth_code = code_match.group(1).rstrip('.')
+        print(f"### sending code to {emailUser} @ {emailDomain} ###")
         data = {
             "body": f"""
                 <html>
-                Enter code <b>{messageParts[16]}</b> at <a href='{messageParts[11]}'>{messageParts[11]}</a> to allow the <b>{devWsName}</b> workspace to be used as a code tunnel.
+                Enter code <b>{auth_code}</b> at <a href='{auth_url}'>{auth_url}</a> to allow the <b>{devWsName}</b> workspace to be used as a code tunnel.
                 </html>
                 """,
             "recips": [
@@ -120,7 +125,7 @@ def process_diff(diff):
         print(data)
         dataSend = json.dumps(data)
         response = requests.post(emailApiUrl, data=dataSend, headers=header)
-        print(response.text)                
+        print(response.text)
     print("-----------------------------")
 
 
