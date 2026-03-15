@@ -93,9 +93,9 @@ commands:
             echo "$SRC does not exist. Skipping execution."
         fi
   #====================================================================================
-events:
-  postStart:
-    - 00-setup-remove-default-yq
-    - 05-setup-start-tunnel-log-watch
-    - 10-setup-run-tunnel
-    - 15-setup-run-user-scripts        
+#events:
+#  postStart:
+#    - 00-setup-remove-default-yq
+#    - 05-setup-start-tunnel-log-watch
+#    - 10-setup-run-tunnel
+#    - 15-setup-run-user-scripts        
