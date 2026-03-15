@@ -1,8 +1,8 @@
 #----------------------------------------------------------
-# dev-claude: tools-udi with Claude Code CLI
+# udi-tools-claude: udi-tools with Claude Code CLI
 #----------------------------------------------------------
 
-FROM tools-udi
+FROM udi-tools
 
 LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 

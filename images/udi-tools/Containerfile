@@ -1,5 +1,5 @@
 #----------------------------------------------------------
-# tools-udi: base red hat udi image with additional tools
+# udi-tools: red hat udi image with additional tools
 #----------------------------------------------------------
 
 FROM quay.io/devfile/universal-developer-image:ubi9-e420701
