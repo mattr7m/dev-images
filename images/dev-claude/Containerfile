@@ -1,0 +1,19 @@
+#----------------------------------------------------------
+# dev-claude: tools-udi with Claude Code CLI
+#----------------------------------------------------------
+
+FROM tools-udi
+
+LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
+
+ARG CLAUDE_CODE_VERSION="2.1.76"
+
+USER 0
+
+# Install Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+ENV HOME=/home/user
+ENTRYPOINT [ "/entrypoint.sh" ]
+WORKDIR /projects
+CMD tail -f /dev/null
