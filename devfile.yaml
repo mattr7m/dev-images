@@ -11,7 +11,7 @@ projects:
 components:
   - name: universal-developer-image
     container:
-      image: ghcr.io/mattr7m/udi-tools-claude:v0.1.0-p3-claude
+      image: ghcr.io/mattr7m/udi-tools:v0.1.0-p3-claude
       env:
         - name: DEBUG
           value: '1'
