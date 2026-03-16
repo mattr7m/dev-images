@@ -11,8 +11,10 @@ projects:
 components:
   - name: universal-developer-image
     container:
-      image: ghcr.io/mattr7m/udi-tools:v0.1.0-p2
+      image: ghcr.io/mattr7m/udi-tools-claude:v0.1.0-p1
       env:
+        - name: DEBUG
+          value: '1'
         - name: DEV_EMAIL
           value: m@tr5.net
         - name: START_DEV_TUNNEL
@@ -50,7 +52,7 @@ commands:
       commandLine: |
         mkdir -p /tmp/log-watch-test && \
         touch /tmp/log-watch-test/curr.log && \
-        python /usr/local/sbin/tunnel-log-watch.py &
+        python -u /usr/local/sbin/tunnel-log-watch.py &
 
   # Example of how to login to the tunnel with both github and microsoft providers. The tunnel log watcher will watch for the successful login and then start the tunnel for remote VSCode development.
   # Note: The tunnel log watcher is necessary because the tunnel command needs to be run after the successful login, but the login process is interactive and can take some time. By watching the logs for the successful login, we can ensure that the tunnel command is only run after the login is complete.
