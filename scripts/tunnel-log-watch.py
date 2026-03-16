@@ -6,7 +6,11 @@ import sys
 import shutil
 import re
 import json
+import traceback
 import requests
+
+# Force unbuffered output so prints are visible when running in background
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 try:
     debug = int(os.environ['DEBUG'])
@@ -80,18 +84,40 @@ except:
 class LogFileChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.src_path.endswith('curr.log'):
-            print(f'Log file {event.src_path} has been modified.')
-            diff = ""
-            diff = get_diff(logWatchPath, curr_log, last_log)
-            if(diff):
-                process_diff(diff)
+            try:
+                print(f'Log file {event.src_path} has been modified.', flush=True)
+                diff = ""
+                diff = get_diff(logWatchPath, curr_log, last_log)
+                if(diff):
+                    process_diff(diff)
+                else:
+                    print("No new lines to process.", flush=True)
+            except Exception as e:
+                print(f"ERROR in on_modified handler: {e}", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
+
+    def on_created(self, event):
+        if event.src_path.endswith('curr.log'):
+            try:
+                print(f'Log file {event.src_path} has been created.', flush=True)
+                diff = ""
+                diff = get_diff(logWatchPath, curr_log, last_log)
+                if(diff):
+                    process_diff(diff)
+                else:
+                    print("No new lines to process.", flush=True)
+            except Exception as e:
+                print(f"ERROR in on_created handler: {e}", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
 
 def process_diff(diff):
-    print("-----------------------------")
-    print("the difference is: ")
-    print(diff)
+    print("-----------------------------", flush=True)
+    print("the difference is: ", flush=True)
+    print(diff, flush=True)
     message = diff[0]
-    print(f"log message: {message}")
+    print(f"log message: {message}", flush=True)
 
     # Match both GitHub and Microsoft auth messages:
     #   GitHub:    "...log into https://github.com/login/device and use code E8C3-4D28"
@@ -102,7 +128,7 @@ def process_diff(diff):
     if url_match and code_match:
         auth_url = url_match.group(1)
         auth_code = code_match.group(1).rstrip('.')
-        print(f"### sending code to {emailUser} @ {emailDomain} ###")
+        print(f"### sending code to {emailUser} @ {emailDomain} ###", flush=True)
         data = {
             "body": f"""
                 <html>
@@ -122,32 +148,42 @@ def process_diff(diff):
         header = {
             'Content-Type': 'application/json'
         }
-        print(data)
+        print(data, flush=True)
         dataSend = json.dumps(data)
-        response = requests.post(emailApiUrl, data=dataSend, headers=header)
-        print(response.text)
-    print("-----------------------------")
+        try:
+            response = requests.post(emailApiUrl, data=dataSend, headers=header, timeout=10)
+            print(f"API response status: {response.status_code}", flush=True)
+            print(f"API response body: {response.text}", flush=True)
+        except Exception as e:
+            print(f"ERROR sending email: {e}", flush=True)
+    else:
+        print(f"No auth code/url pattern found in message: {message}", flush=True)
+    print("-----------------------------", flush=True)
 
 
 def init_last_log(path, last_log):
     os.makedirs(path, exist_ok=True)
-    f = open(path + last_log, "w")    
+    f = open(path + last_log, "w")
     f.close()
 
 def get_diff(path, curr_log, last_log):
+    print("in get_diff", flush=True)
     curr_lines = []
     last_lines = []
     diff = []
 
-    last_log_f = open(path + last_log, "r")    
-    last_lines = last_log_f.readlines()    
+    last_log_f = open(path + last_log, "r")
+    last_lines = last_log_f.readlines()
     last_log_f.close()
+    print(f"last log lines: {last_lines}", flush=True)
 
     try:
-        curr_log_f = open(path + curr_log, "r")    
+        curr_log_f = open(path + curr_log, "r")
         curr_lines = curr_log_f.readlines()
         curr_log_f.close()
-    except:
+        print(f"cur log lines: {curr_lines}", flush=True)
+    except Exception as e:
+        print(f"ERROR reading curr log: {e}", flush=True)
         return
 
     diff  = [i for i in curr_lines if i not in last_lines]
@@ -163,10 +199,11 @@ def watch_log_folder(path):
     observer = Observer()
     observer.schedule(event_handler, path, recursive=False)
     observer.start()
+    print(f"Watching {path} for changes...", flush=True)
 
     try:
         while True:
-            time.sleep(1)            
+            time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
@@ -176,7 +213,7 @@ if __name__ == "__main__":
     if not startDevTunnel:
         print("START_DEV_TUNNEL is False - do not start tunnel-log-watch")
         sys.exit()
-        
+
     curr_log = 'curr.log'
     last_log = 'last.log'
 
