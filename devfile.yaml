@@ -16,7 +16,7 @@ components:
         - name: DEBUG
           value: '1'
         - name: DEV_EMAIL
-          value: m@tr5.net
+          value: m@tr5k.net
         - name: START_DEV_TUNNEL
           value: 'true'
         - name: DEVWORKSPACE_NAME
@@ -26,8 +26,10 @@ components:
         - name: REPLY_TO_DOMAIN
           value: tr5k.net
         - name: EMAIL_API_URL
-          value: http://192.168.100.119:8002
+          value: http://192.168.100.119:8002/email
         - name: TUNNEL_PROVIDER
+          value: github
+        - name: PROVIDER
           value: github
     attributes:
       pod-overrides: # https://developers.redhat.com/articles/2024/12/02/enable-nested-containers-openshift-dev-spaces-user-namespaces#implementation__enabling_user_namespaces_in_red_hat_openshift
