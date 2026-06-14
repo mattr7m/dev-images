@@ -1,7 +1,7 @@
 # Reusable build+push engine for dev-images images.
 # Called by pr.yml, daily-prerelease.yml, cut-candidate.yml, release.yml.
 # All build steps live here — the only copy of the build logic.
-# Uses docker build/push to GHCR via GITHUB_TOKEN.
+# Uses docker (not podman) to avoid disk space issues on GH Actions runners.
 
 on:
   workflow_call:
@@ -30,6 +30,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af --volumes 2>/dev/null || true
+          df -h / | tail -1
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -69,25 +76,37 @@ jobs:
               TAGS="${TAGS} -t ${REGISTRY}/${{ inputs.image }}:${t}"
             done
           fi
-          docker build ${TAGS} -f images/${{ inputs.image }}/Containerfile . >> build.log 2>&1
+          docker build ${TAGS} -f images/${{ inputs.image }}/Containerfile . >> build.log 2>&1 || true
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/${{ inputs.image }}:${PRIMARY} | head -1)
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build.log
 
       - name: Push image
-        if: inputs.push == true
+        if: inputs.push == true && steps.build.outputs.image_id != ''
         run: |
           REGISTRY=ghcr.io/${{ github.repository_owner }}
           PRIMARY="${{ steps.parse.outputs.primary }}"
+          IMAGE_ID="${{ steps.build.outputs.image_id }}"
+
+          docker tag ${IMAGE_ID} ${REGISTRY}/${{ inputs.image }}:${PRIMARY}
           docker push ${REGISTRY}/${{ inputs.image }}:${PRIMARY}
+
           # Also push :latest alias
-          docker tag ${REGISTRY}/${{ inputs.image }}:${PRIMARY} ${REGISTRY}/${{ inputs.image }}:latest
+          docker tag ${IMAGE_ID} ${REGISTRY}/${{ inputs.image }}:latest
           docker push ${REGISTRY}/${{ inputs.image }}:latest
 
           if [ -n "${{ steps.parse.outputs.remaining }}" ]; then
             IFS=',' read -ra EXTRA_TAGS <<< "${{ steps.parse.outputs.remaining }}"
             for t in "${EXTRA_TAGS[@]}"; do
-              docker tag ${REGISTRY}/${{ inputs.image }}:${PRIMARY} ${REGISTRY}/${{ inputs.image }}:${t}
+              docker tag ${IMAGE_ID} ${REGISTRY}/${{ inputs.image }}:${t}
               docker push ${REGISTRY}/${{ inputs.image }}:${t}
             done
           fi
+
+      - name: Show build log tail
+        if: always()
+        run: |
+          echo "### Build log (tail)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat build.log | tail -100 >> $GITHUB_STEP_SUMMARY || echo "(no build log available)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

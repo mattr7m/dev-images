@@ -26,8 +26,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Free disk space before build
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af --volumes 2>/dev/null || true
+          df -h /
+
       - name: Login to GHCR
-        uses: redhat-actions/podman-login@v1
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -110,28 +117,50 @@ jobs:
           echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
 
       - name: Build udi-tools candidate
+        id: build-udi
         run: |
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          TAG="${{ steps.manifest.outputs.rc_tag }}" make build-udi-tools >> build.log 2>&1 || true
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/udi-tools:${RC} -f images/udi-tools/Containerfile . >> build.log 2>&1 || true
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/udi-tools:${RC} | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build.log
 
       - name: Build udi-tools-claude candidate
+        id: build-claude
         run: |
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          TAG="${{ steps.manifest.outputs.rc_tag }}-claude" make build-udi-tools-claude >> build2.log 2>&1 || true
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/udi-tools-claude:${RC}-claude -f images/udi-tools-claude/Containerfile . >> build2.log 2>&1 || true
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/udi-tools-claude:${RC}-claude | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build2.log
 
       - name: Push candidate tags
+        if: steps.build-udi.outputs.image_id != ''
         run: |
           RC="${{ steps.manifest.outputs.rc_tag }}"
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          TAG="${RC}" CONTAINER_TOOL=docker make push-udi-tools
-          TAG="${RC}-claude" CONTAINER_TOOL=docker make push-udi-tools-claude
-          # Also push :candidate floating tags
-          docker tag ${REGISTRY}/udi-tools:${RC} ${REGISTRY}/udi-tools:candidate || true
-          docker tag ${REGISTRY}/udi-tools-claude:${RC}-claude ${REGISTRY}/udi-tools-claude:candidate || true
-          docker push ${REGISTRY}/udi-tools:candidate || true
-          docker push ${REGISTRY}/udi-tools-claude:candidate || true
+          UDI_ID="${{ steps.build-udi.outputs.image_id }}"
+          CLAUDE_ID="${{ steps.build-claude.outputs.image_id }}"
+
+          # udi-tools: push with rc tag + :latest + :candidate
+          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:${RC}
+          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:latest
+          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:candidate
+          docker push ${REGISTRY}/udi-tools:${RC}
+          docker push ${REGISTRY}/udi-tools:latest
+          docker push ${REGISTRY}/udi-tools:candidate
+
+          # udi-tools-claude: push with rc tag + :latest + :candidate
+          if [ -n "${CLAUDE_ID}" ]; then
+            docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:${RC}-claude
+            docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:latest
+            docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:candidate
+            docker push ${REGISTRY}/udi-tools-claude:${RC}-claude
+            docker push ${REGISTRY}/udi-tools-claude:latest
+            docker push ${REGISTRY}/udi-tools-claude:candidate
+          fi
 
       - name: Create and push git tags
         run: |
