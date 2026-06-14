@@ -102,10 +102,10 @@ jobs:
             claude_code_version: "${{ steps.args.outputs.claude }}"
           EOF
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
           git add version-lock-manifest.yaml
-          git commit -m "Add version lock manifest for ${RC_TAG}" --author="Qwen3.5 35B-A3B <noreply@tr5k.ai>" || true
+          git commit -m "Add version lock manifest for ${RC_TAG}" || true
 
           echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
 
