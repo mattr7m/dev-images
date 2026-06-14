@@ -1,0 +1,64 @@
+# verify-pins: fail if any candidate Containerfile still has floating refs.
+# Checks for: releases/latest, bare rolling tags, master-branch raw URLs, curl | bash installs.
+# Required check on PRs touching images/.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "images/**"
+      - ".github/workflows/verify-pins.yml"
+  workflow_call:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for floating references
+        run: |
+          ERRORS=0
+
+          for cf in images/*/Containerfile; do
+            echo "==> Checking $$cf for floating refs..."
+
+            # Check for releases/latest downloads
+            if grep -n 'releases/latest/download' "$$cf" >/dev/null 2>&1; then
+              echo "::error::$$cf: contains 'releases/latest' — must pin to explicit version"
+              ERRORS=$((ERRORS + 1))
+              grep -n 'releases/latest/download' "$$cf"
+            fi
+
+            # Check for bare :latest or rolling base tags (not vX.Y.Z)
+            if grep -nP '^FROM\s+\S+:latest(\s|$)' "$$cf" >/dev/null 2>&1; then
+              echo "::error::$$cf: uses :latest as base image"
+              ERRORS=$((ERRORS + 1))
+              grep -n ':latest' "$$cf"
+            fi
+
+            # Check for master-branch raw URLs (colordiff, etc.)
+            if grep -nP 'github\.com/[^/]+/[^/]+/blob/master/' "$$cf" >/dev/null 2>&1; then
+              echo "::error::$$cf: downloads from a master branch — pin to a release tag"
+              ERRORS=$((ERRORS + 1))
+              grep -n 'blob/master/' "$$cf"
+            fi
+
+            # Check for curl | bash patterns
+            if grep -nP 'curl\s.*\|\s*(ba)?sh' "$$cf" >/dev/null 2>&1; then
+              echo "::error::$$cf: contains 'curl | bash' pattern"
+              ERRORS=$((ERRORS + 1))
+              grep -n 'curl.*|.*(ba)?sh' "$$cf"
+            fi
+
+          done
+
+          if [ $$ERRORS -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## verify-pins summary" >> $GITHUB_STEP_SUMMARY
+            echo "Found $$ERRORS pin verification failure(s)." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "All checks passed — no floating references found."
