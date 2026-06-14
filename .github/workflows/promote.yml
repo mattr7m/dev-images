@@ -1,0 +1,40 @@
+# Promote: triggered by release:published event.
+# Re-tags the candidate image by digest to vX.Y.Z + :latest. No rebuild.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get release tag
+        id: release
+        run: |
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Promote udi-tools by digest
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          skopeo copy --src-tls-verify=false docker://${REGISTRY}/udi-tools:${TAG} docker://${REGISTRY}/udi-tools:latest --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Promote udi-tools-claude by digest
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          skopeo copy --src-tls-verify=false docker://${REGISTRY}/udi-tools-claude:${TAG}-claude docker://${REGISTRY}/udi-tools-claude:latest --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
