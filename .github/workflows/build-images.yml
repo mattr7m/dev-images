@@ -1,0 +1,100 @@
+# Reusable build+push engine for dev-images images.
+# Called by pr.yml, daily-prerelease.yml, cut-candidate.yml, release.yml.
+# All build steps live here — the only copy of the build logic.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Image name (udi-tools or udi-tools-claude)"
+        type: string
+        required: true
+      tags:
+        description: "Comma-separated list of tags to apply (first tag is used for build)"
+        type: string
+        required: false
+        default: "latest"
+      push:
+        description: "Whether to push to registry"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse tags
+        id: parse
+        run: |
+          IFS=',' read -ra TAGS <<< "${{ inputs.tags }}"
+          echo "primary=${TAGS[0]# }" >> $GITHUB_OUTPUT
+          REMAINING=""
+          for i in "${!TAGS[@]}"; do
+            if [ "$i" -gt 0 ]; then
+              T="${TAGS[$i]# }"
+              if [ -n "$REMAINING" ]; then
+                REMAINING="${REMAINING},${T}"
+              else
+                REMAINING="${T}"
+              fi
+            fi
+          done
+          echo "remaining=${REMAINING}" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          set -e
+          REGISTRY=ghcr.io/${{ github.repository_owner }} \
+          TAG="${{ steps.parse.outputs.primary }}" \
+          make build-${{ inputs.image }} >> build.log 2>&1 || true
+          tail -n 50 build.log
+
+      - name: Apply additional tags
+        if: steps.parse.outputs.remaining != ''
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          IFS=',' read -ra EXTRA_TAGS <<< "${{ steps.parse.outputs.remaining }}"
+          for t in "${EXTRA_TAGS[@]}"; do
+            podman tag ${REGISTRY}/${{ inputs.image }}:${{ steps.parse.outputs.primary }} ${REGISTRY}/${{ inputs.image }}:${t} || true
+          done
+
+      - name: Push image
+        if: inputs.push == true
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          TAG="${{ steps.parse.outputs.primary }}"
+          make push-${{ inputs.image }}
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+      - name: Push additional tags
+        if: inputs.push == true && steps.parse.outputs.remaining != ''
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          IFS=',' read -ra EXTRA_TAGS <<< "${{ steps.parse.outputs.remaining }}"
+          for t in "${EXTRA_TAGS[@]}"; do
+            echo "Pushing ${REGISTRY}/${{ inputs.image }}:${t}"
+            podman push ${REGISTRY}/${{ inputs.image }}:${t} || true
+          done
+
+      - name: Show build log tail
+        if: always()
+        run: |
+          echo "### Build log (tail)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 100 build.log >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
