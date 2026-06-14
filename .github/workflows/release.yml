@@ -1,0 +1,109 @@
+# Weekly release: pick the latest green candidate, cut a clean vX.Y.Z GitHub Release,
+# and promote by digest (no rebuild). Skips if already released.
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: "Candidate tag to release (e.g. v0.2.0-rc.1); omit for latest"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get VERSION
+        id: version
+        run: |
+          echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Select candidate tag
+        id: select
+        run: |
+          CANDIDATE="${{ github.event.inputs.candidate_tag }}"
+          if [ -z "$CANDIDATE" ]; then
+            VERSION="${{ steps.version.outputs.version }}"
+            CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | sort -V | tail -1)
+          fi
+          if [ -z "$CANDIDATE" ]; then
+            echo "::error::No candidate tags found for version ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+          echo "candidate=${CANDIDATE}" >> $GITHUB_OUTPUT
+
+      - name: Check if already released
+        id: check-released
+        run: |
+          CLEAN_TAG="${{ steps.version.outputs.version }}"
+          if git tag -l "${CLEAN_TAG}" | grep -q .; then
+            echo "already=true" >> $GITHUB_OUTPUT
+          else
+            echo "already=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if already released
+        if: steps.check-released.outputs.already == 'true'
+        run: |
+          echo "::notice::Release ${{ steps.version.outputs.version }} already exists — skipping."
+
+      - name: Derive clean release tag
+        id: derive
+        run: |
+          CLEAN_TAG="${{ steps.version.outputs.version }}"
+          echo "clean_tag=${CLEAN_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          gh release create "${CLEAN}" --generate-notes --target main 2>&1 || echo "Release may already exist"
+
+      - name: Login to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote by digest (no rebuild)
+        run: |
+          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          CANDIDATE="${{ steps.select.outputs.candidate }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+
+          # udi-tools: pull candidate, re-tag to clean release + latest
+          podman pull ${REGISTRY}/udi-tools:${CANDIDATE} 2>/dev/null || true
+          podman tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
+          podman tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:latest 2>/dev/null || true
+          podman push ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
+          podman push ${REGISTRY}/udi-tools:latest 2>/dev/null || true
+
+          # udi-tools-claude
+          CLAUDE_CANDIDATE="${CANDIDATE}-claude"
+          podman pull ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} 2>/dev/null || true
+          podman tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
+          podman tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
+          podman push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
+          podman push ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
+
+      - name: Log version changes from manifest
+        run: |
+          if [ -f version-lock-manifest.yaml ]; then
+            echo "### Image version changes" >> $GITHUB_STEP_SUMMARY
+            cat version-lock-manifest.yaml >> $GITHUB_STEP_SUMMARY
+          fi

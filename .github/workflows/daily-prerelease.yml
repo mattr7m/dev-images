@@ -1,0 +1,29 @@
+# Daily pre-release: build all images, push :nightly
+# Runs on a schedule + manually via workflow_dispatch.
+# This is the throwaway/rolling track — proves upstream still works.
+
+on:
+  schedule:
+    # Every day at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  daily-build-udi-tools:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: udi-tools
+      tags: nightly
+      push: true
+
+  daily-build-udi-tools-claude:
+    needs: daily-build-udi-tools
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: udi-tools-claude
+      tags: nightly
+      push: true

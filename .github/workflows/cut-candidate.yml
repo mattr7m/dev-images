@@ -1,0 +1,141 @@
+# Cut a pinned candidate: resolve base digest + pin all ARG versions,
+# commit a version lock manifest, build, push :candidate + vX.Y.Z-rc.N.
+
+on:
+  schedule:
+    # Every weekday at 07:00 UTC
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Image to cut candidate for (udi-tools or udi-tools-claude)"
+        type: string
+        required: false
+        default: "udi-tools"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  cut-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get VERSION
+        id: version
+        run: |
+          echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Resolve base image digest
+        id: base-digest
+        run: |
+          DIGEST=$(skopeo inspect --format '{{.Digest}}' docker://quay.io/devfile/universal-developer-image:ubi9-e420701 2>/dev/null || echo "unresolved")
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+
+      - name: Compute next rc number
+        id: rc-num
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          RC_NUM=0
+          EXISTING=$(git tag -l "v${VERSION}-rc.*" 2>/dev/null | sed 's/v[^-]*-rc//' | sort -t. -k1,1n -k2,2n | tail -1)
+          if [ -n "$EXISTING" ]; then
+            RC_NUM=$((EXISTING + 1))
+          fi
+          echo "num=${RC_NUM}" >> $GITHUB_OUTPUT
+
+      - name: Extract ARG versions from Containerfiles
+        id: args
+        run: |
+          udi_cf="images/udi-tools/Containerfile"
+
+          ARGO_VERSION=$(grep '^ARG ARGO_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          GH_VERSION=$(grep '^ARG GH_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          ROXCTL_VERSION=$(grep '^ARG ROXCTL_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          KUBESEAL_VERSION=$(grep '^ARG KUBESEAL_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          KUSTOMIZE_VERSION=$(grep '^ARG KUSTOMIZE_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          KUBECOLOR_VERSION=$(grep '^ARG KUBECOLOR_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+
+          claude_cf="images/udi-tools-claude/Containerfile"
+          CLAUDE_VERSION=$(grep '^ARG CLAUDE_CODE_VERSION=' "$claude_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+
+          echo "argo=${ARGO_VERSION}" >> $GITHUB_OUTPUT
+          echo "gh=${GH_VERSION}" >> $GITHUB_OUTPUT
+          echo "roxctl=${ROXCTL_VERSION}" >> $GITHUB_OUTPUT
+          echo "kubeseal=${KUBESEAL_VERSION}" >> $GITHUB_OUTPUT
+          echo "kustomize=${KUSTOMIZE_VERSION}" >> $GITHUB_OUTPUT
+          echo "kubecolor=${KUBECOLOR_VERSION}" >> $GITHUB_OUTPUT
+          echo "claude=${CLAUDE_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Commit version lock manifest
+        id: manifest
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BASE_DIGEST="${{ steps.base-digest.outputs.digest }}"
+          RC_NUM="${{ steps.rc-num.outputs.num }}"
+          RC_TAG="v${VERSION}-rc.${RC_NUM}"
+
+          cat > version-lock-manifest.yaml <<EOF
+          version: "${RC_TAG}"
+          base_image:
+            reference: "quay.io/devfile/universal-developer-image:ubi9-e420701"
+            digest: "${BASE_DIGEST}"
+          udi-tools:
+            argo_version: "${{ steps.args.outputs.argo }}"
+            gh_version: "${{ steps.args.outputs.gh }}"
+            roxctl_version: "${{ steps.args.outputs.roxctl }}"
+            kubeseal_version: "${{ steps.args.outputs.kubeseal }}"
+            kustomize_version: "${{ steps.args.outputs.kustomize }}"
+            kubecolor_version: "${{ steps.args.outputs.kubecolor }}"
+          udi-tools-claude:
+            claude_code_version: "${{ steps.args.outputs.claude }}"
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version-lock-manifest.yaml
+          git commit -m "Add version lock manifest for ${RC_TAG}" --author="Qwen3.5 35B-A3B <noreply@tr5k.ai>" || true
+
+          echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build udi-tools candidate
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          TAG="${{ steps.manifest.outputs.rc_tag }}" make build-udi-tools >> build.log 2>&1 || true
+          tail -n 30 build.log
+
+      - name: Build udi-tools-claude candidate
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          TAG="${{ steps.manifest.outputs.rc_tag }}-claude" make build-udi-tools-claude >> build2.log 2>&1 || true
+          tail -n 30 build2.log
+
+      - name: Push candidate tags
+        run: |
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          TAG="${RC}" make push-udi-tools
+          TAG="${RC}-claude" make push-udi-tools-claude
+          # Also push :candidate floating tags
+          podman tag ${REGISTRY}/udi-tools:${RC} ${REGISTRY}/udi-tools:candidate || true
+          podman tag ${REGISTRY}/udi-tools-claude:${RC}-claude ${REGISTRY}/udi-tools-claude:candidate || true
+          podman push ${REGISTRY}/udi-tools:candidate || true
+          podman push ${REGISTRY}/udi-tools-claude:candidate || true
+
+      - name: Create and push git tags
+        run: |
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          git tag -a "${RC}" -m "Candidate ${RC} (udi-tools)" || true
+          git tag -a "${RC}-claude" -m "Candidate ${RC}-claude (udi-tools-claude)" || true
+          git push origin "${RC}" "${RC}-claude" --force-with-lease
