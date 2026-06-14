@@ -16,6 +16,20 @@ podman build -t udi-tools -f images/udi-tools/Containerfile .
 
 The build context must be the repo root (not `images/udi-tools/`) because the Containerfile copies files from `scripts/`.
 
+### devbox (kubeopencode-oriented)
+
+```bash
+podman build -t devbox -f images/devbox/Containerfile .
+```
+
+Build the derivative after the base:
+
+```bash
+podman build -t udi-tools-claude -f images/udi-tools-claude/Containerfile .
+```
+
+The build context must be the repo root (not `images/devbox/`) because the Containerfile references files at the top level.
+
 ## Architecture
 
 - **`images/udi-tools/Containerfile`** — Main artifact. Installs CLI tools (argocd, gh, roxctl, kubeseal, kustomize, kubecolor, yq, colordiff, ansible) and the VSCode tunnel CLI on top of the UBI9 base image. Tool versions are pinned via `ARG` directives at the top of the file.
