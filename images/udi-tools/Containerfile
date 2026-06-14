@@ -73,7 +73,7 @@ RUN export ARCH=$(uname -m) \
     && rm -rf /tmp/kubecolor*
 
 # Install yq
-RUN curl -L https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && \
+RUN curl -L https://github.com/mikefarah/yq/releases/v3.0.0/download/yq_linux_amd64 -o /usr/bin/yq && \
     rm -f /home/user/.local/bin/yq && \
     ln -s /usr/bin/yq  /usr/share/Modules/bin
 
