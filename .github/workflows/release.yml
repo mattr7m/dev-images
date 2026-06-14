@@ -87,19 +87,19 @@ jobs:
           REGISTRY=ghcr.io/${{ github.repository_owner }}
 
           # udi-tools: pull candidate, re-tag to clean release + latest
-          podman pull ${REGISTRY}/udi-tools:${CANDIDATE} 2>/dev/null || true
-          podman tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
-          podman tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:latest 2>/dev/null || true
-          podman push ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
-          podman push ${REGISTRY}/udi-tools:latest 2>/dev/null || true
+          docker pull ${REGISTRY}/udi-tools:${CANDIDATE} 2>/dev/null || true
+          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
+          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:latest 2>/dev/null || true
+          docker push ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
+          docker push ${REGISTRY}/udi-tools:latest 2>/dev/null || true
 
           # udi-tools-claude
           CLAUDE_CANDIDATE="${CANDIDATE}-claude"
-          podman pull ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} 2>/dev/null || true
-          podman tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
-          podman tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
-          podman push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
-          podman push ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
+          docker pull ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} 2>/dev/null || true
+          docker tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
+          docker tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
+          docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
+          docker push ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
 
       - name: Log version changes from manifest
         run: |

@@ -125,13 +125,13 @@ jobs:
         run: |
           RC="${{ steps.manifest.outputs.rc_tag }}"
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          TAG="${RC}" make push-udi-tools
-          TAG="${RC}-claude" make push-udi-tools-claude
+          TAG="${RC}" CONTAINER_TOOL=docker make push-udi-tools
+          TAG="${RC}-claude" CONTAINER_TOOL=docker make push-udi-tools-claude
           # Also push :candidate floating tags
-          podman tag ${REGISTRY}/udi-tools:${RC} ${REGISTRY}/udi-tools:candidate || true
-          podman tag ${REGISTRY}/udi-tools-claude:${RC}-claude ${REGISTRY}/udi-tools-claude:candidate || true
-          podman push ${REGISTRY}/udi-tools:candidate || true
-          podman push ${REGISTRY}/udi-tools-claude:candidate || true
+          docker tag ${REGISTRY}/udi-tools:${RC} ${REGISTRY}/udi-tools:candidate || true
+          docker tag ${REGISTRY}/udi-tools-claude:${RC}-claude ${REGISTRY}/udi-tools-claude:candidate || true
+          docker push ${REGISTRY}/udi-tools:candidate || true
+          docker push ${REGISTRY}/udi-tools-claude:candidate || true
 
       - name: Create and push git tags
         run: |
