@@ -78,6 +78,8 @@ jobs:
           KUBESEAL_VERSION=$(grep '^ARG KUBESEAL_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           KUSTOMIZE_VERSION=$(grep '^ARG KUSTOMIZE_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           KUBECOLOR_VERSION=$(grep '^ARG KUBECOLOR_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          YQ_VERSION_UDI=$(grep '^ARG YQ_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          COLORDIFF_VERSION=$(grep '^ARG COLORDIFF_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
 
           # udi-tools-claude ARGs
           CLAUDE_VERSION=$(grep '^ARG CLAUDE_CODE_VERSION=' "$claude_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
@@ -96,6 +98,8 @@ jobs:
           echo "kubeseal=${KUBESEAL_VERSION}" >> $GITHUB_OUTPUT
           echo "kustomize=${KUSTOMIZE_VERSION}" >> $GITHUB_OUTPUT
           echo "kubecolor=${KUBECOLOR_VERSION}" >> $GITHUB_OUTPUT
+          echo "yq_udi=${YQ_VERSION_UDI}" >> $GITHUB_OUTPUT
+          echo "colordiff=${COLORDIFF_VERSION}" >> $GITHUB_OUTPUT
           echo "claude=${CLAUDE_VERSION}" >> $GITHUB_OUTPUT
           echo "devbox_gh=${DEVBOX_GH_VERSION}" >> $GITHUB_OUTPUT
           echo "yq=${YQ_VERSION}" >> $GITHUB_OUTPUT
@@ -122,6 +126,8 @@ jobs:
             kubeseal_version: "${{ steps.args.outputs.kubeseal }}"
             kustomize_version: "${{ steps.args.outputs.kustomize }}"
             kubecolor_version: "${{ steps.args.outputs.kubecolor }}"
+            yq_version: "${{ steps.args.outputs.yq_udi }}"
+            colordiff_version: "${{ steps.args.outputs.colordiff }}"
           udi-tools-claude:
             claude_code_version: "${{ steps.args.outputs.claude }}"
           devbox:
