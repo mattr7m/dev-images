@@ -1,5 +1,6 @@
 # Cut a pinned candidate: resolve base digest + pin all ARG versions,
 # commit a version lock manifest, build, push :candidate + vX.Y.Z-rc.N.
+# Supports: udi-tools, udi-tools-claude, devbox, devbox-claude.
 
 on:
   schedule:
@@ -8,10 +9,10 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: "Image to cut candidate for (udi-tools or udi-tools-claude)"
+        description: "Image to cut candidate for (udi-tools, udi-tools-claude, devbox, or devbox-claude)"
         type: string
         required: false
-        default: "udi-tools"
+        default: ""
 
 permissions:
   contents: write
@@ -66,7 +67,10 @@ jobs:
         id: args
         run: |
           udi_cf="images/udi-tools/Containerfile"
+          claude_cf="images/udi-tools-claude/Containerfile"
+          devbox_cf="images/devbox/Containerfile"
 
+          # udi-tools ARGs
           ARGO_VERSION=$(grep '^ARG ARGO_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           GH_VERSION=$(grep '^ARG GH_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           ROXCTL_VERSION=$(grep '^ARG ROXCTL_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
@@ -74,8 +78,16 @@ jobs:
           KUSTOMIZE_VERSION=$(grep '^ARG KUSTOMIZE_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           KUBECOLOR_VERSION=$(grep '^ARG KUBECOLOR_VERSION=' "$udi_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
 
-          claude_cf="images/udi-tools-claude/Containerfile"
+          # udi-tools-claude ARGs
           CLAUDE_VERSION=$(grep '^ARG CLAUDE_CODE_VERSION=' "$claude_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+
+          # devbox ARGs
+          DEVBOX_GH_VERSION=$(grep '^ARG GH_VERSION=' "$devbox_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          YQ_VERSION=$(grep '^ARG YQ_VERSION=' "$devbox_cf" | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+
+          # devbox-claude ARGs
+          NODE_VERSION=$(grep '^ARG NODE_VERSION=' "images/devbox-claude/Containerfile" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+          CLAUDE_CODE_VERSION=$(grep '^ARG CLAUDE_CODE_VERSION=' "images/devbox-claude/Containerfile" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
 
           echo "argo=${ARGO_VERSION}" >> $GITHUB_OUTPUT
           echo "gh=${GH_VERSION}" >> $GITHUB_OUTPUT
@@ -84,6 +96,10 @@ jobs:
           echo "kustomize=${KUSTOMIZE_VERSION}" >> $GITHUB_OUTPUT
           echo "kubecolor=${KUBECOLOR_VERSION}" >> $GITHUB_OUTPUT
           echo "claude=${CLAUDE_VERSION}" >> $GITHUB_OUTPUT
+          echo "devbox_gh=${DEVBOX_GH_VERSION}" >> $GITHUB_OUTPUT
+          echo "yq=${YQ_VERSION}" >> $GITHUB_OUTPUT
+          echo "node=${NODE_VERSION}" >> $GITHUB_OUTPUT
+          echo "claude_code=${CLAUDE_CODE_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Commit version lock manifest
         id: manifest
@@ -107,10 +123,16 @@ jobs:
             kubecolor_version: "${{ steps.args.outputs.kubecolor }}"
           udi-tools-claude:
             claude_code_version: "${{ steps.args.outputs.claude }}"
+          devbox:
+            gh_version: "${{ steps.args.outputs.devbox_gh }}"
+            yq_version: "${{ steps.args.outputs.yq }}"
+          devbox-claude:
+            node_version: "${{ steps.args.outputs.node }}"
+            claude_code_version: "${{ steps.args.outputs.claude_code }}"
           EOF
 
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "Image Maintainer Agent"
+          git config user.email "agents@tr5k.ai"
           git add version-lock-manifest.yaml
           git commit -m "Add version lock manifest for ${RC_TAG}" || true
 
@@ -121,7 +143,7 @@ jobs:
         run: |
           REGISTRY=ghcr.io/${{ github.repository_owner }}
           RC="${{ steps.manifest.outputs.rc_tag }}"
-          docker build -t ${REGISTRY}/udi-tools:${RC} -f images/udi-tools/Containerfile . >> build.log 2>&1 || true
+          docker build -t ${REGISTRY}/udi-tools:${RC} -f images/udi-tools/Containerfile . >> build.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/udi-tools:${RC} | head -1)
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build.log
@@ -131,29 +153,51 @@ jobs:
         run: |
           REGISTRY=ghcr.io/${{ github.repository_owner }}
           RC="${{ steps.manifest.outputs.rc_tag }}"
-          docker build -t ${REGISTRY}/udi-tools-claude:${RC}-claude -f images/udi-tools-claude/Containerfile . >> build2.log 2>&1 || true
+          docker build -t ${REGISTRY}/udi-tools-claude:${RC}-claude -f images/udi-tools-claude/Containerfile . >> build2.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/udi-tools-claude:${RC}-claude | head -1)
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build2.log
 
+      - name: Build devbox candidate
+        id: build-devbox
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/devbox:${RC} -f images/devbox/Containerfile . >> build3.log 2>&1
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox:${RC} | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
+          tail -n 30 build3.log
+
+      - name: Build devbox-claude candidate
+        id: build-devbox-claude
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/devbox-claude:${RC} -f images/devbox-claude/Containerfile . >> build4.log 2>&1
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox-claude:${RC} | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
+          tail -n 30 build4.log
+
       - name: Push candidate tags
-        if: steps.build-udi.outputs.image_id != ''
+        if: steps.build-udi.outputs.image_id != '' || steps.build-devbox.outputs.image_id != ''
         run: |
           RC="${{ steps.manifest.outputs.rc_tag }}"
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          UDI_ID="${{ steps.build-udi.outputs.image_id }}"
-          CLAUDE_ID="${{ steps.build-claude.outputs.image_id }}"
 
           # udi-tools: push with rc tag + :latest + :candidate
-          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:${RC}
-          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:latest
-          docker tag ${UDI_ID} ${REGISTRY}/udi-tools:candidate
-          docker push ${REGISTRY}/udi-tools:${RC}
-          docker push ${REGISTRY}/udi-tools:latest
-          docker push ${REGISTRY}/udi-tools:candidate
+          if [ -n "${{ steps.build-udi.outputs.image_id }}" ]; then
+            UDI_ID="${{ steps.build-udi.outputs.image_id }}"
+            docker tag ${UDI_ID} ${REGISTRY}/udi-tools:${RC}
+            docker tag ${UDI_ID} ${REGISTRY}/udi-tools:latest
+            docker tag ${UDI_ID} ${REGISTRY}/udi-tools:candidate
+            docker push ${REGISTRY}/udi-tools:${RC}
+            docker push ${REGISTRY}/udi-tools:latest
+            docker push ${REGISTRY}/udi-tools:candidate
+          fi
 
-          # udi-tools-claude: push with rc tag + :latest + :candidate
-          if [ -n "${CLAUDE_ID}" ]; then
+          # udi-tools-claude
+          if [ -n "${{ steps.build-claude.outputs.image_id }}" ]; then
+            CLAUDE_ID="${{ steps.build-claude.outputs.image_id }}"
             docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:${RC}-claude
             docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:latest
             docker tag ${CLAUDE_ID} ${REGISTRY}/udi-tools-claude:candidate
@@ -162,9 +206,44 @@ jobs:
             docker push ${REGISTRY}/udi-tools-claude:candidate
           fi
 
+          # devbox
+          if [ -n "${{ steps.build-devbox.outputs.image_id }}" ]; then
+            DEVBOX_ID="${{ steps.build-devbox.outputs.image_id }}"
+            docker tag ${DEVBOX_ID} ${REGISTRY}/devbox:${RC}
+            docker tag ${DEVBOX_ID} ${REGISTRY}/devbox:latest
+            docker tag ${DEVBOX_ID} ${REGISTRY}/devbox:candidate
+            docker push ${REGISTRY}/devbox:${RC}
+            docker push ${REGISTRY}/devbox:latest
+            docker push ${REGISTRY}/devbox:candidate
+          fi
+
+          # devbox-claude
+          if [ -n "${{ steps.build-devbox-claude.outputs.image_id }}" ]; then
+            DEVBOX_CLAUDE_ID="${{ steps.build-devbox-claude.outputs.image_id }}"
+            docker tag ${DEVBOX_CLAUDE_ID} ${REGISTRY}/devbox-claude:${RC}
+            docker tag ${DEVBOX_CLAUDE_ID} ${REGISTRY}/devbox-claude:latest
+            docker tag ${DEVBOX_CLAUDE_ID} ${REGISTRY}/devbox-claude:candidate
+            docker push ${REGISTRY}/devbox-claude:${RC}
+            docker push ${REGISTRY}/devbox-claude:latest
+            docker push ${REGISTRY}/devbox-claude:candidate
+          fi
+
       - name: Create and push git tags
         run: |
           RC="${{ steps.manifest.outputs.rc_tag }}"
-          git tag -a "${RC}" -m "Candidate ${RC} (udi-tools)" || true
-          git tag -a "${RC}-claude" -m "Candidate ${RC}-claude (udi-tools-claude)" || true
-          git push origin "${RC}" "${RC}-claude" --force-with-lease
+          # udi-tools tag
+          if [ -n "${{ steps.build-udi.outputs.image_id }}" ]; then
+            git tag -a "${RC}" -m "Candidate ${RC} (udi-tools)" || true
+          fi
+          # udi-tools-claude tag
+          if [ -n "${{ steps.build-claude.outputs.image_id }}" ]; then
+            git tag -a "${RC}-claude" -m "Candidate ${RC}-claude (udi-tools-claude)" || true
+          fi
+          # devbox + devbox-claude share the same rc tag (one ghcr repo per derivative)
+          if [ -n "${{ steps.build-devbox.outputs.image_id }}" ]; then
+            git tag -a "${RC}-devbox" -m "Candidate ${RC} (devbox)" || true
+          fi
+          if [ -n "${{ steps.build-devbox-claude.outputs.image_id }}" ]; then
+            git tag -a "${RC}-devbox-claude" -m "Candidate ${RC} (devbox-claude)" || true
+          fi
+          git push origin "${RC}" "${RC}-claude" "${RC}-devbox" "${RC}-devbox-claude" --force-with-lease 2>/dev/null || true
