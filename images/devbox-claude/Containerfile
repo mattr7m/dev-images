@@ -9,6 +9,7 @@
 #     image ENTRYPOINT with TOOLS_DIR=/tools expecting a binary at /tools/opencode.
 #   - this image plants a boot script as /tools/opencode (via the dispatcher
 #     ENTRYPOINT) so that hardcoded command boots Claude Code behind a health shim.
+# hadolint ignore:DL3006
 FROM devbox
 
 LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images"
