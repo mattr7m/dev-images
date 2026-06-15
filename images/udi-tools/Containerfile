@@ -15,7 +15,7 @@ ARG KUBESEAL_VERSION="0.34.0"
 ARG KUSTOMIZE_VERSION="5.8.1"
 ARG KUBECOLOR_VERSION="0.5.3"
 ARG YQ_VERSION="4.44.1"
-ARG COLORDIFF_VERSION="1.2.0"
+ARG COLORDIFF_VERSION="v1.0.22"
 
 USER 0
 
@@ -88,9 +88,9 @@ RUN    dnf -y makecache \
               python3-pip \
     && dnf -y clean all
 
-# install colordiff (pinned to explicit version, using source archive)
+# install colordiff (pinned to explicit version via source archive + make install)
 RUN curl -L https://github.com/daveewart/colordiff/archive/refs/tags/${COLORDIFF_VERSION}.tar.gz | tar xz -C /tmp && \
-    cd /tmp/colordiff-${COLORDIFF_VERSION} && make install PREFIX=/usr/local && \
+    cd /tmp/colordiff-${COLORDIFF_VERSION%-*} && make install PREFIX=/usr/local && \
     rm -rf /tmp/colordiff*
 
 # Switch to python3.11
