@@ -27,3 +27,18 @@ jobs:
       image: udi-tools-claude
       tags: nightly
       push: true
+
+  daily-build-devbox:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox
+      tags: nightly
+      push: true
+
+  daily-build-devbox-claude:
+    needs: daily-build-devbox
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox-claude
+      tags: nightly
+      push: true
