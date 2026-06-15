@@ -37,7 +37,8 @@ jobs:
           CANDIDATE="${{ github.event.inputs.candidate_tag }}"
           if [ -z "$CANDIDATE" ]; then
             VERSION="${{ steps.version.outputs.version }}"
-            CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | sort -V | tail -1)
+            # Pick the latest base rc tag (vX.Y.Z-rc.N), excluding derivative suffixed tags
+            CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | grep -E "^v${VERSION}-rc\.[0-9]+$" | sort -V | tail -1)
           fi
           if [ -z "$CANDIDATE" ]; then
             echo "::error::No candidate tags found for version ${{ steps.version.outputs.version }}"
@@ -56,52 +57,56 @@ jobs:
           fi
 
       - name: Skip if already released
+        id: skip
         if: steps.check-released.outputs.already == 'true'
         run: |
           echo "::notice::Release ${{ steps.version.outputs.version }} already exists — skipping."
+          echo "skipped=true" >> $GITHUB_OUTPUT
 
-      - name: Derive clean release tag
-        id: derive
-        run: |
-          CLEAN_TAG="${{ steps.version.outputs.version }}"
-          echo "clean_tag=${CLEAN_TAG}" >> $GITHUB_OUTPUT
+      - name: Login to GHCR
+        if: steps.skip.outputs.skipped != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push candidate images for release
-        id: build
+      - name: Promote candidates to release tags (no rebuild)
+        if: steps.skip.outputs.skipped != 'true'
+        id: promote-images
         run: |
-          # Use build-images.yml reusable workflow to build all images from the candidate state
-          # We rebuild here (not promote-by-digest) because we need a clean tag for the release
           REGISTRY=ghcr.io/${{ github.repository_owner }}
-          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          CLEAN="${{ steps.version.outputs.version }}"
           CANDIDATE="${{ steps.select.outputs.candidate }}"
 
-          echo "Building from candidate ${CANDIDATE} → release ${CLEAN}"
+          echo "Promoting from candidate ${CANDIDATE} → release ${CLEAN}"
 
-          # Pull udi-tools candidate, tag as release
+          # udi-tools
           docker pull ${REGISTRY}/udi-tools:${CANDIDATE}
           docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN}
           docker push ${REGISTRY}/udi-tools:${CLEAN}
 
-          # Pull udi-tools-claude candidate, tag as release
+          # udi-tools-claude
           docker pull ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude
           docker tag ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
           docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
 
-          # Pull devbox candidate, tag as release
+          # devbox
           docker pull ${REGISTRY}/devbox:${CANDIDATE}
           docker tag ${REGISTRY}/devbox:${CANDIDATE} ${REGISTRY}/devbox:${CLEAN}
           docker push ${REGISTRY}/devbox:${CLEAN}
 
-          # Pull devbox-claude candidate, tag as release
+          # devbox-claude
           docker pull ${REGISTRY}/devbox-claude:${CANDIDATE}
           docker tag ${REGISTRY}/devbox-claude:${CANDIDATE} ${REGISTRY}/devbox-claude:${CLEAN}
           docker push ${REGISTRY}/devbox-claude:${CLEAN}
 
       - name: Create GitHub Release with version changes section
+        if: steps.skip.outputs.skipped != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          CLEAN="${{ steps.version.outputs.version }}"
           CANDIDATE="${{ steps.select.outputs.candidate }}"
 
           # Start notes with Image version changes from manifest
@@ -121,16 +126,10 @@ jobs:
             exit 1
           }
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Promote candidates to :latest
+      - name: Promote release tags to :latest
+        if: steps.skip.outputs.skipped != 'true'
         run: |
-          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          CLEAN="${{ steps.version.outputs.version }}"
           REGISTRY=ghcr.io/${{ github.repository_owner }}
 
           # udi-tools
@@ -152,3 +151,10 @@ jobs:
           docker pull ${REGISTRY}/devbox-claude:${CLEAN}
           docker tag ${REGISTRY}/devbox-claude:${CLEAN} ${REGISTRY}/devbox-claude:latest
           docker push ${REGISTRY}/devbox-claude:latest
+
+      - name: Create release git tag
+        if: steps.skip.outputs.skipped != 'true'
+        run: |
+          CLEAN="${{ steps.version.outputs.version }}"
+          git tag -a "${CLEAN}" -m "Release ${CLEAN}" || true
+          git push origin "${CLEAN}" --force-with-lease 2>/dev/null || true
