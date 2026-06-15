@@ -66,44 +66,89 @@ jobs:
           CLEAN_TAG="${{ steps.version.outputs.version }}"
           echo "clean_tag=${CLEAN_TAG}" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Build and push candidate images for release
+        id: build
+        run: |
+          # Use build-images.yml reusable workflow to build all images from the candidate state
+          # We rebuild here (not promote-by-digest) because we need a clean tag for the release
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          CLEAN="${{ steps.derive.outputs.clean_tag }}"
+          CANDIDATE="${{ steps.select.outputs.candidate }}"
+
+          echo "Building from candidate ${CANDIDATE} → release ${CLEAN}"
+
+          # Pull udi-tools candidate, tag as release
+          docker pull ${REGISTRY}/udi-tools:${CANDIDATE}
+          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN}
+          docker push ${REGISTRY}/udi-tools:${CLEAN}
+
+          # Pull udi-tools-claude candidate, tag as release
+          docker pull ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude
+          docker tag ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+          docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+
+          # Pull devbox candidate, tag as release
+          docker pull ${REGISTRY}/devbox:${CANDIDATE}
+          docker tag ${REGISTRY}/devbox:${CANDIDATE} ${REGISTRY}/devbox:${CLEAN}
+          docker push ${REGISTRY}/devbox:${CLEAN}
+
+          # Pull devbox-claude candidate, tag as release
+          docker pull ${REGISTRY}/devbox-claude:${CANDIDATE}
+          docker tag ${REGISTRY}/devbox-claude:${CANDIDATE} ${REGISTRY}/devbox-claude:${CLEAN}
+          docker push ${REGISTRY}/devbox-claude:${CLEAN}
+
+      - name: Create GitHub Release with version changes section
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CLEAN="${{ steps.derive.outputs.clean_tag }}"
-          gh release create "${CLEAN}" --generate-notes --target main 2>&1 || echo "Release may already exist"
+          CANDIDATE="${{ steps.select.outputs.candidate }}"
+
+          # Start notes with Image version changes from manifest
+          NOTES_FILE=$(mktemp)
+          echo "## Image version changes" > "$NOTES_FILE"
+          if [ -f version-lock-manifest.yaml ]; then
+            cat version-lock-manifest.yaml >> "$NOTES_FILE"
+          else
+            echo "_No version lock manifest found. This release was not cut from a candidate._" >> "$NOTES_FILE"
+          fi
+          echo "" >> "$NOTES_FILE"
+
+          # Append auto-generated release notes (PRs since last release)
+          gh release create "${CLEAN}" --generate-notes --target main --prerelease=false \
+            --notes-file "$NOTES_FILE" 2>&1 || {
+            echo "Release may already exist or failed to create"
+            exit 1
+          }
 
       - name: Login to GHCR
-        uses: redhat-actions/podman-login@v1
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote by digest (no rebuild)
+      - name: Promote candidates to :latest
         run: |
           CLEAN="${{ steps.derive.outputs.clean_tag }}"
-          CANDIDATE="${{ steps.select.outputs.candidate }}"
           REGISTRY=ghcr.io/${{ github.repository_owner }}
 
-          # udi-tools: pull candidate, re-tag to clean release + latest
-          docker pull ${REGISTRY}/udi-tools:${CANDIDATE} 2>/dev/null || true
-          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
-          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:latest 2>/dev/null || true
-          docker push ${REGISTRY}/udi-tools:${CLEAN} 2>/dev/null || true
-          docker push ${REGISTRY}/udi-tools:latest 2>/dev/null || true
+          # udi-tools
+          docker pull ${REGISTRY}/udi-tools:${CLEAN}
+          docker tag ${REGISTRY}/udi-tools:${CLEAN} ${REGISTRY}/udi-tools:latest
+          docker push ${REGISTRY}/udi-tools:latest
 
           # udi-tools-claude
-          CLAUDE_CANDIDATE="${CANDIDATE}-claude"
-          docker pull ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} 2>/dev/null || true
-          docker tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
-          docker tag ${REGISTRY}/udi-tools-claude:${CLAUDE_CANDIDATE} ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
-          docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude 2>/dev/null || true
-          docker push ${REGISTRY}/udi-tools-claude:latest 2>/dev/null || true
+          docker pull ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+          docker tag ${REGISTRY}/udi-tools-claude:${CLEAN}-claude ${REGISTRY}/udi-tools-claude:latest
+          docker push ${REGISTRY}/udi-tools-claude:latest
 
-      - name: Log version changes from manifest
-        run: |
-          if [ -f version-lock-manifest.yaml ]; then
-            echo "### Image version changes" >> $GITHUB_STEP_SUMMARY
-            cat version-lock-manifest.yaml >> $GITHUB_STEP_SUMMARY
-          fi
+          # devbox
+          docker pull ${REGISTRY}/devbox:${CLEAN}
+          docker tag ${REGISTRY}/devbox:${CLEAN} ${REGISTRY}/devbox:latest
+          docker push ${REGISTRY}/devbox:latest
+
+          # devbox-claude
+          docker pull ${REGISTRY}/devbox-claude:${CLEAN}
+          docker tag ${REGISTRY}/devbox-claude:${CLEAN} ${REGISTRY}/devbox-claude:latest
+          docker push ${REGISTRY}/devbox-claude:latest
