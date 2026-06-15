@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -25,101 +23,68 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve release and candidate tags
-        id: resolve
+      - name: Get release tag
+        id: release
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          REGISTRY=ghcr.io/${{ github.repository_owner }}
-
-          # Derive candidate tag from release tag: v0.2.0 → v0.2.0-rc.N (latest rc)
-          VERSION=$(echo "$TAG" | sed 's/^v//')
-          CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | grep -E "^v${VERSION}-rc\.[0-9]+$" | sort -V | tail -1)
-
-          if [ -z "$CANDIDATE" ]; then
-            echo "::error::No candidate tag found for version ${VERSION}"
-            exit 1
-          fi
-
-          echo "release_tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "candidate=${CANDIDATE}" >> $GITHUB_OUTPUT
-          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Promote udi-tools by digest
         run: |
-          REGISTRY="${{ steps.resolve.outputs.registry }}"
-          CANDIDATE="${{ steps.resolve.outputs.candidate }}"
-          TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          # Pull candidate image, get its digest
-          if ! docker pull ${REGISTRY}/udi-tools:${CANDIDATE}; then
-            echo "::error::Failed to pull udi-tools candidate ${CANDIDATE}"
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          # Pull candidate by digest, then re-tag to release + latest
+          CANDIDATE_DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools:${TAG} 2>/dev/null || echo "")
+          if [ -n "$CANDIDATE_DIGEST" ]; then
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/udi-tools:${TAG}
+            docker push ${REGISTRY}/udi-tools:${TAG}
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/udi-tools:latest
+            docker push ${REGISTRY}/udi-tools:latest
+          else
+            echo "No udi-tools image found for tag ${TAG}"
             exit 1
           fi
-
-          # Get the image ID (digest reference)
-          IMAGE_ID=$(docker inspect --format '{{.Id}}' ${REGISTRY}/udi-tools:${CANDIDATE})
-          echo "Promoting udi-tools: ${IMAGE_ID} → ${TAG} + :latest"
-
-          docker tag ${IMAGE_ID} ${REGISTRY}/udi-tools:${TAG}
-          docker push ${REGISTRY}/udi-tools:${TAG}
-          docker tag ${IMAGE_ID} ${REGISTRY}/udi-tools:latest
-          docker push ${REGISTRY}/udi-tools:latest
 
       - name: Promote udi-tools-claude by digest
         run: |
-          REGISTRY="${{ steps.resolve.outputs.registry }}"
-          CANDIDATE="${{ steps.resolve.outputs.candidate }}"
-          TAG="${{ steps.resolve.outputs.release_tag }}"
-          DERIV_TAG="${CANDIDATE}-claude"
-
-          if ! docker pull ${REGISTRY}/udi-tools-claude:${DERIV_TAG}; then
-            echo "::error::Failed to pull udi-tools-claude candidate ${DERIV_TAG}"
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          CANDIDATE_DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools-claude:${TAG}-claude 2>/dev/null || echo "")
+          if [ -n "$CANDIDATE_DIGEST" ]; then
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/udi-tools-claude:${TAG}-claude
+            docker push ${REGISTRY}/udi-tools-claude:${TAG}-claude
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/udi-tools-claude:latest
+            docker push ${REGISTRY}/udi-tools-claude:latest
+          else
+            echo "No udi-tools-claude image found for tag ${TAG}"
             exit 1
           fi
-
-          IMAGE_ID=$(docker inspect --format '{{.Id}}' ${REGISTRY}/udi-tools-claude:${DERIV_TAG})
-          RELEASE_CLAUDE="${TAG}-claude"
-          echo "Promoting udi-tools-claude: ${IMAGE_ID} → ${RELEASE_CLAUDE} + :latest"
-
-          docker tag ${IMAGE_ID} ${REGISTRY}/udi-tools-claude:${RELEASE_CLAUDE}
-          docker push ${REGISTRY}/udi-tools-claude:${RELEASE_CLAUDE}
-          docker tag ${IMAGE_ID} ${REGISTRY}/udi-tools-claude:latest
-          docker push ${REGISTRY}/udi-tools-claude:latest
 
       - name: Promote devbox by digest
         run: |
-          REGISTRY="${{ steps.resolve.outputs.registry }}"
-          CANDIDATE="${{ steps.resolve.outputs.candidate }}"
-          TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          if ! docker pull ${REGISTRY}/devbox:${CANDIDATE}; then
-            echo "::error::Failed to pull devbox candidate ${CANDIDATE}"
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          CANDIDATE_DIGEST=$(docker pull --quiet ${REGISTRY}/devbox:${TAG} 2>/dev/null || echo "")
+          if [ -n "$CANDIDATE_DIGEST" ]; then
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/devbox:${TAG}
+            docker push ${REGISTRY}/devbox:${TAG}
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/devbox:latest
+            docker push ${REGISTRY}/devbox:latest
+          else
+            echo "No devbox image found for tag ${TAG}"
             exit 1
           fi
-
-          IMAGE_ID=$(docker inspect --format '{{.Id}}' ${REGISTRY}/devbox:${CANDIDATE})
-          echo "Promoting devbox: ${IMAGE_ID} → ${TAG} + :latest"
-
-          docker tag ${IMAGE_ID} ${REGISTRY}/devbox:${TAG}
-          docker push ${REGISTRY}/devbox:${TAG}
-          docker tag ${IMAGE_ID} ${REGISTRY}/devbox:latest
-          docker push ${REGISTRY}/devbox:latest
 
       - name: Promote devbox-claude by digest
         run: |
-          REGISTRY="${{ steps.resolve.outputs.registry }}"
-          CANDIDATE="${{ steps.resolve.outputs.candidate }}"
-          TAG="${{ steps.resolve.outputs.release_tag }}"
-
-          if ! docker pull ${REGISTRY}/devbox-claude:${CANDIDATE}; then
-            echo "::error::Failed to pull devbox-claude candidate ${CANDIDATE}"
+          TAG="${{ steps.release.outputs.tag }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          CANDIDATE_DIGEST=$(docker pull --quiet ${REGISTRY}/devbox-claude:${TAG} 2>/dev/null || echo "")
+          if [ -n "$CANDIDATE_DIGEST" ]; then
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/devbox-claude:${TAG}
+            docker push ${REGISTRY}/devbox-claude:${TAG}
+            docker tag ${CANDIDATE_DIGEST} ${REGISTRY}/devbox-claude:latest
+            docker push ${REGISTRY}/devbox-claude:latest
+          else
+            echo "No devbox-claude image found for tag ${TAG}"
             exit 1
           fi
-
-          IMAGE_ID=$(docker inspect --format '{{.Id}}' ${REGISTRY}/devbox-claude:${CANDIDATE})
-          echo "Promoting devbox-claude: ${IMAGE_ID} → ${TAG} + :latest"
-
-          docker tag ${IMAGE_ID} ${REGISTRY}/devbox-claude:${TAG}
-          docker push ${REGISTRY}/devbox-claude:${TAG}
-          docker tag ${IMAGE_ID} ${REGISTRY}/devbox-claude:latest
-          docker push ${REGISTRY}/devbox-claude:latest

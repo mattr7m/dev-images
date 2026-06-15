@@ -28,28 +28,15 @@ jobs:
       tags: nightly
       push: true
 
-  daily-prune-1:
-    needs: daily-build-udi-tools-claude
-    runs-on: ubuntu-latest
-    steps:
-      - run: sudo docker system prune -af --volumes 2>/dev/null || true
-
   daily-build-devbox:
-    needs: daily-prune-1
     uses: ./.github/workflows/build-images.yml
     with:
       image: devbox
       tags: nightly
       push: true
 
-  daily-prune-2:
-    needs: daily-build-devbox
-    runs-on: ubuntu-latest
-    steps:
-      - run: sudo docker system prune -af --volumes 2>/dev/null || true
-
   daily-build-devbox-claude:
-    needs: daily-prune-2
+    needs: daily-build-devbox
     uses: ./.github/workflows/build-images.yml
     with:
       image: devbox-claude
