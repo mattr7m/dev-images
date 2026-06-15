@@ -1,0 +1,60 @@
+# Required PR check: build without push, lint, verify-pins
+# Gates merge — must pass before a PR can land on main.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "images/**"
+      - "scripts/**"
+      - ".github/workflows/pr.yml"
+      - ".github/workflows/build-images.yml"
+      - ".github/workflows/verify-pins.yml"
+      - "Makefile"
+      - "VERSION"
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+jobs:
+  build-udi-tools:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: udi-tools
+      tags: pr-test
+      push: false
+
+  build-udi-tools-claude:
+    needs: build-udi-tools
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: udi-tools-claude
+      tags: pr-test
+      push: false
+
+  build-devbox:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox
+      tags: pr-test
+      push: false
+
+  build-devbox-claude:
+    needs: build-devbox
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox-claude
+      tags: pr-test
+      push: false
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Containerfiles
+        run: make lint
+
+  verify-pins:
+    uses: ./.github/workflows/verify-pins.yml
