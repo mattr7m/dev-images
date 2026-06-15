@@ -7,7 +7,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: "Image name (udi-tools or udi-tools-claude)"
+        description: "Image name (udi-tools, udi-tools-claude, devbox, or devbox-claude)"
         type: string
         required: true
       tags:
@@ -76,7 +76,7 @@ jobs:
               TAGS="${TAGS} -t ${REGISTRY}/${{ inputs.image }}:${t}"
             done
           fi
-          docker build ${TAGS} -f images/${{ inputs.image }}/Containerfile . >> build.log 2>&1 || true
+          docker build ${TAGS} -f images/${{ inputs.image }}/Containerfile . >> build.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/${{ inputs.image }}:${PRIMARY} | head -1)
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build.log
