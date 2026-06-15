@@ -88,9 +88,9 @@ RUN    dnf -y makecache \
               python3-pip \
     && dnf -y clean all
 
-# install colordiff (pinned to v1.0.22 via source archive + make install)
+# install colordiff (pinned to v1.0.22 via source archive, copy binary directly)
 RUN curl -L https://github.com/daveewart/colordiff/archive/refs/tags/${COLORDIFF_TAG}.tar.gz | tar xz -C /tmp && \
-    cd /tmp/colordiff-* && make install PREFIX=/usr/local && \
+    cd /tmp/colordiff-* && install -m 755 colordiff.pl /usr/local/bin/colordiff && \
     rm -rf /tmp/colordiff*
 
 # Switch to python3.11
