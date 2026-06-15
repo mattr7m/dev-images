@@ -13,7 +13,9 @@ on:
       - "Makefile"
       - "VERSION"
 
-permissions: read-all
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   build-udi-tools:
