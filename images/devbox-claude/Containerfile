@@ -1,0 +1,53 @@
+# devbox-claude — devbox derivative that runs Claude Code instead of opencode
+# inside a kubeopencode Agent pod. Built from repo root (after the base):
+#   podman build -t devbox-claude -f images/devbox-claude/Containerfile .
+#
+# Contract (see dev-images-agent tasks/devbox-claude.md and
+# kube-open-code-agent guidance/agent-templating-claude-code.md):
+#   - the kubeopencode controller hardcodes `/tools/opencode serve --port <N>
+#     --hostname 0.0.0.0` as the server command, and its agentImage init runs the
+#     image ENTRYPOINT with TOOLS_DIR=/tools expecting a binary at /tools/opencode.
+#   - this image plants a boot script as /tools/opencode (via the dispatcher
+#     ENTRYPOINT) so that hardcoded command boots Claude Code behind a health shim.
+FROM devbox
+
+LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images"
+
+# Node.js (pinned tarball — no curl|bash, satisfies the devbox network discipline)
+# Claude Code is an npm package, and the devbox base carries no Node runtime.
+ARG NODE_VERSION=22.14.0
+ARG CLAUDE_CODE_VERSION=2.1.76
+
+USER 0
+
+RUN for i in $(seq 1 $RETRY_COUNT); do \
+      ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/; s/arm64/arm64/') \
+      && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" \
+         -o /tmp/node.tar.xz \
+      && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+      && rm -f /tmp/node.tar.xz \
+      && node --version && npm --version \
+      && break || { echo "node retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
+    done
+
+# Claude Code CLI (pinned) — installed globally to /usr/local so any arbitrary
+# UID can exec it; ~/.claude state lands under HOME=/tmp at runtime.
+RUN for i in $(seq 1 $RETRY_COUNT); do \
+      npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+      && claude --version \
+      && break || { echo "claude-code retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
+    done
+
+# Boot scripts: dispatcher (image ENTRYPOINT) + the planted server boot script.
+COPY images/devbox-claude/scripts/dispatcher.sh /usr/local/bin/dispatcher.sh
+COPY images/devbox-claude/scripts/claude-agent-boot.sh /usr/local/bin/claude-agent-boot.sh
+RUN chmod +x /usr/local/bin/dispatcher.sh /usr/local/bin/claude-agent-boot.sh
+
+# Back to the arbitrary-UID contract inherited from devbox.
+USER 1000:0
+WORKDIR ${WORKSPACE_DIR}
+
+# Image default ENTRYPOINT is the dispatcher (handles both the agentImage-init
+# path and a plain interactive shell).
+ENTRYPOINT ["/usr/local/bin/dispatcher.sh"]
+CMD ["/bin/bash"]
