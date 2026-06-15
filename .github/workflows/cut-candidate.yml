@@ -146,6 +146,8 @@ jobs:
           RC="${{ steps.manifest.outputs.rc_tag }}"
           docker build -t ${REGISTRY}/udi-tools:${RC} -f images/udi-tools/Containerfile . >> build.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/udi-tools:${RC} | head -1)
+          # Tag as short name for derivative builds (udi-tools-claude uses FROM udi-tools)
+          docker tag ${IMAGE_ID} udi-tools
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build.log
 
@@ -166,6 +168,8 @@ jobs:
           RC="${{ steps.manifest.outputs.rc_tag }}"
           docker build -t ${REGISTRY}/devbox:${RC} -f images/devbox/Containerfile . >> build3.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox:${RC} | head -1)
+          # Tag as short name for derivative builds (devbox-claude uses FROM devbox)
+          docker tag ${IMAGE_ID} devbox
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build3.log
 
