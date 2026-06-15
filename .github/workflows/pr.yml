@@ -16,10 +16,33 @@ on:
 permissions: read-all
 
 jobs:
-  build-and-lint:
+  build-udi-tools:
     uses: ./.github/workflows/build-images.yml
     with:
       image: udi-tools
+      tags: pr-test
+      push: false
+
+  build-udi-tools-claude:
+    needs: build-udi-tools
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: udi-tools-claude
+      tags: pr-test
+      push: false
+
+  build-devbox:
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox
+      tags: pr-test
+      push: false
+
+  build-devbox-claude:
+    needs: build-devbox
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox-claude
       tags: pr-test
       push: false
 
