@@ -65,14 +65,14 @@ SHIM_PID=$!
 # writable (/tmp per the devbox contract); a mounted
 # /etc/claude-code/managed-settings.json is read natively by Claude Code.
 #
-# Run mode is selected by /bootstrap/claude-mode (default "interactive"):
+# Run mode is selected by the CLAUDE_MODE env var, set by the consuming Agent CR
+# (e.g. sourced from a ConfigMap via podSpec.extraEnv). Default "interactive":
 #   - interactive: launch plain `claude` — a human attaches via `tmux attach -t
 #     main` and approves prompts / the first-run trust dialog (normal session).
 #   - headless: launch `claude --dangerously-skip-permissions` — for unattended
 #     runs (skips permission prompts AND the trust dialog; permitted because the
 #     image runs non-root). No human ever attaches.
-CLAUDE_MODE="$(cat /bootstrap/claude-mode 2>/dev/null | tr -d '[:space:]' || true)"
-if [ "$CLAUDE_MODE" = "headless" ]; then
+if [ "${CLAUDE_MODE:-interactive}" = "headless" ]; then
   tmux new-session -d -s main -c /workspace 'claude --dangerously-skip-permissions' || true
 else
   tmux new-session -d -s main -c /workspace 'claude' || true
