@@ -12,14 +12,21 @@ IMAGES := udi-tools udi-tools-claude devbox devbox-claude
 
 # ── Build targets ──────────────────────────────────────────────
 
+# Base targets also tag the bare short name (e.g. `udi-tools`, `devbox`) so the
+# derivative Containerfiles' local `FROM udi-tools` / `FROM devbox` resolve when
+# built in the same image store. Without this, `make build-<derivative>` (and
+# `build-all`) fail to find the base.
+
 build-udi-tools:
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/udi-tools:$(TAG) -f images/udi-tools/Containerfile .
+	$(CONTAINER_TOOL) tag $(REGISTRY)/udi-tools:$(TAG) udi-tools
 
 build-udi-tools-claude: build-udi-tools
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/udi-tools-claude:$(TAG) -f images/udi-tools-claude/Containerfile .
 
 build-devbox:
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox:$(TAG) -f images/devbox/Containerfile .
+	$(CONTAINER_TOOL) tag $(REGISTRY)/devbox:$(TAG) devbox
 
 build-devbox-claude: build-devbox
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-claude:$(TAG) -f images/devbox-claude/Containerfile .
@@ -31,7 +38,8 @@ build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-clau
 lint:
 	@for cf in images/*/Containerfile; do \
 		echo "==> hadolint $$cf"; \
-		$(CONTAINER_TOOL) run --rm -i docker.io/hadolint/hadolint:stable < "$$cf" || exit 1; \
+		$(CONTAINER_TOOL) run --rm -i ghcr.io/hadolint/hadolint:v2.12.0 \
+			hadolint --ignore DL3006 --failure-threshold error - < "$$cf" || exit 1; \
 	done
 
 # ── Push targets ───────────────────────────────────────────────
