@@ -1,4 +1,6 @@
 # Required PR check: build without push, lint, verify-pins
+# Lint uses direct hadolint binary (no container — OCI volume mounts blocked in CI)
+Required PR check: build without push, lint, verify-pins
 # Gates merge — must pass before a PR can land on main.
 
 on:
