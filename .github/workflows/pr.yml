@@ -1,5 +1,11 @@
-# Required PR check: build without push, lint, verify-pins
+# Required PR check: build (no push) + lint.
 # Gates merge — must pass before a PR can land on main.
+#
+# Each base and its derivative build on ONE runner (via `make`), because the
+# derivative's local `FROM <base>` only resolves in the same image store —
+# separate runners don't share built images. Two pairs run in parallel, so disk
+# holds two images per runner (not all four). verify-pins runs as its own
+# required check (verify-pins.yml on pull_request); no need to call it here.
 
 on:
   pull_request:
@@ -8,53 +14,41 @@ on:
       - "images/**"
       - "scripts/**"
       - ".github/workflows/pr.yml"
-      - ".github/workflows/build-images.yml"
-      - ".github/workflows/verify-pins.yml"
       - "Makefile"
       - "VERSION"
 
 permissions:
   contents: read
   packages: read
-  actions: read
 
 jobs:
   build-udi-tools:
-    uses: ./.github/workflows/build-images.yml
-    with:
-      image: udi-tools
-      tags: pr-test
-      push: false
-
-  build-udi-tools-claude:
-    needs: build-udi-tools
-    uses: ./.github/workflows/build-images.yml
-    with:
-      image: udi-tools-claude
-      tags: pr-test
-      push: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af --volumes 2>/dev/null || true
+          df -h / | tail -1
+      - name: Build udi-tools + udi-tools-claude (no push)
+        run: make build-udi-tools build-udi-tools-claude CONTAINER_TOOL=docker
 
   build-devbox:
-    uses: ./.github/workflows/build-images.yml
-    with:
-      image: devbox
-      tags: pr-test
-      push: false
-
-  build-devbox-claude:
-    needs: build-devbox
-    uses: ./.github/workflows/build-images.yml
-    with:
-      image: devbox-claude
-      tags: pr-test
-      push: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          docker system prune -af --volumes 2>/dev/null || true
+          df -h / | tail -1
+      - name: Build devbox + devbox-claude (no push)
+        run: make build-devbox build-devbox-claude CONTAINER_TOOL=docker
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Lint Containerfiles
-        run: make lint
-
-  verify-pins:
-    uses: ./.github/workflows/verify-pins.yml
+        run: make lint CONTAINER_TOOL=docker
