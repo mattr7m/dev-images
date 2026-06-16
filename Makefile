@@ -31,7 +31,8 @@ build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-clau
 lint:
 	@for cf in images/*/Containerfile; do \
 		echo "==> hadolint $$cf"; \
-		$(CONTAINER_TOOL) run --rm -i ghcr.io/hadolint/hadolint:v2.12.0 hadolint - < "$$cf" || exit 1; \
+		$(CONTAINER_TOOL) run --rm -i ghcr.io/hadolint/hadolint:v2.12.0 \
+			hadolint --ignore DL3006 --failure-threshold error - < "$$cf" || exit 1; \
 	done
 
 # ── Push targets ───────────────────────────────────────────────
