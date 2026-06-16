@@ -20,23 +20,27 @@ ARG CLAUDE_CODE_VERSION=2.1.76
 
 USER 0
 
+# Use the .tar.gz (gzip, always present) — the devbox base has no `xz`, so a
+# .tar.xz fails to extract. Verify node/npm AFTER the loop so an exhausted retry
+# fails the build instead of silently producing an image with no Node.
 RUN for i in $(seq 1 $RETRY_COUNT); do \
       ARCH=$(dpkg --print-architecture | sed 's/amd64/x64/; s/arm64/arm64/') \
-      && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.xz" \
-         -o /tmp/node.tar.xz \
-      && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
-      && rm -f /tmp/node.tar.xz \
-      && node --version && npm --version \
+      && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz" \
+         -o /tmp/node.tar.gz \
+      && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \
+      && rm -f /tmp/node.tar.gz \
       && break || { echo "node retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
-    done
+    done; \
+    node --version && npm --version
 
 # Claude Code CLI (pinned) — installed globally to /usr/local so any arbitrary
-# UID can exec it; ~/.claude state lands under HOME=/tmp at runtime.
+# UID can exec it; ~/.claude state lands under HOME=/tmp at runtime. Verify
+# `claude` AFTER the loop so a failed install fails the build.
 RUN for i in $(seq 1 $RETRY_COUNT); do \
       npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-      && claude --version \
       && break || { echo "claude-code retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
-    done
+    done; \
+    claude --version
 
 # Boot scripts: dispatcher (image ENTRYPOINT) + the planted server boot script.
 COPY images/devbox-claude/scripts/dispatcher.sh /usr/local/bin/dispatcher.sh
