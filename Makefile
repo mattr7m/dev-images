@@ -31,7 +31,7 @@ build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-clau
 lint:
 	@for cf in images/*/Containerfile; do \
 		echo "==> hadolint $$cf"; \
-		$(CONTAINER_TOOL) run --rm -i -v "$$(pwd)/$$cf:/dev/stdin:ro" docker.io/hadolint/hadolint:latest /dev/stdin --warning DL4006 --warning SC2086 || exit 1;
+		$(CONTAINER_TOOL) run --rm -i -v "$$(pwd)/$$cf:/dev/stdin:ro" docker.io/hadolint/hadolint:latest /dev/stdin --warning DL4006 --warning SC2086 || exit 1; \
 	done
 
 # ── Push targets ───────────────────────────────────────────────
