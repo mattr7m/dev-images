@@ -31,7 +31,7 @@ build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-clau
 lint:
 	@for cf in images/*/Containerfile; do \
 		echo "==> hadolint $$cf"; \
-		$(CONTAINER_TOOL) run --rm -i --entrypoint hadolint docker.io/hadolint/hadolint:latest --no-fatal < "$$cf" || exit 1; \
+		$(CONTAINER_TOOL) run --rm -i --entrypoint hadolint docker.io/hadolint/hadolint:latest --no-fail < "$$cf" || exit 1; \
 	done
 
 # ── Push targets ───────────────────────────────────────────────
