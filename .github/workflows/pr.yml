@@ -73,8 +73,18 @@ jobs:
           docker tag ${DEVBOX_ID} devbox
           docker build -t ${REGISTRY}/devbox-claude:pr-test -f images/devbox-claude/Containerfile . >> build4.log 2>&1 || { tail -n 30 build4.log; exit 1; }
 
+      - name: Install hadolint
+        run: |
+          curl -sL https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
+
       - name: Lint Containerfiles
-        run: make lint
+        run: |
+          for cf in images/*/Containerfile; do
+            echo "==> hadolint $cf"
+            hadolint --warning DL4006 --warning SC2086 "$cf" || exit 1
+          done
 
   verify-pins:
     runs-on: ubuntu-latest
