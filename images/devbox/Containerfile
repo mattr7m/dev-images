@@ -32,8 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # === CLI tooling (layer 3 — CLI tooling) ===
 
-# GitHub CLI (gh) — pinned version, retry loop for apt source setup
-ARG GH_VERSION=2.93.0
+# GitHub CLI (gh) — latest from the gh apt repo, retry loop for apt source setup.
+# (The previous GH_VERSION=2.93.0 pin was not available in the apt repo, so gh
+# silently failed to install. Pin a repo-available version here if a specific
+# gh is required.) Verify after the loop so an exhausted retry fails the build.
 RUN for i in $(seq 1 $RETRY_COUNT); do \
       mkdir -p /etc/apt/keyrings \
       && curl -fsSL "https://cli.github.com/packages/githubcli-archive-keyring.gpg" \
@@ -41,10 +43,11 @@ RUN for i in $(seq 1 $RETRY_COUNT); do \
       && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
       && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
          > /etc/apt/sources.list.d/github-cli.list \
-      && apt-get update && apt-get install -y --no-install-recommends gh="${GH_VERSION}"* \
+      && apt-get update && apt-get install -y --no-install-recommends gh \
       && rm -rf /var/lib/apt/lists/* \
       && break || { echo "gh retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
-    done
+    done; \
+    gh --version
 
 # yq — pinned version, retry loop
 ARG YQ_VERSION=v4.45.1
@@ -53,16 +56,20 @@ RUN for i in $(seq 1 $RETRY_COUNT); do \
         -o /usr/local/bin/yq \
       && chmod +x /usr/local/bin/yq \
       && break || { echo "yq retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
-    done
+    done; \
+    yq --version
 
-# kubectl — pinned version via stable.txt, retry loop
+# kubectl — latest stable, retry loop. kubectl's download path uses the Debian
+# arch names (amd64/arm64) directly — do NOT convert to x86_64/aarch64 (that 404s).
+# Verify after the loop so an exhausted retry fails the build.
 RUN for i in $(seq 1 $RETRY_COUNT); do \
-      ARCH=$(dpkg --print-architecture | sed 's/amd64/x86_64/' | sed 's/arm64/aarch64/') \
+      ARCH=$(dpkg --print-architecture) \
       && curl -fsSL "https://dl.k8s.io/release/$(curl -L -sf https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl" \
         -o /usr/local/bin/kubectl \
       && chmod +x /usr/local/bin/kubectl \
       && break || { echo "kubectl retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
-    done
+    done; \
+    kubectl version --client
 
 # === Workspace setup (layer 4 — workspace+user) ===
 ARG WORKSPACE_DIR=/workspace
