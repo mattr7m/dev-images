@@ -62,10 +62,21 @@ PYEOF
 SHIM_PID=$!
 
 # Start Claude Code in a tmux session named `main`, cwd /workspace. HOME is
-# writable (/tmp per the devbox contract), so ~/.claude persists for the pod's
-# lifetime. A mounted /etc/claude-code/managed-settings.json is read natively by
-# Claude Code — we do not touch it.
-tmux new-session -d -s main -c /workspace 'claude' || true
+# writable (/tmp per the devbox contract); a mounted
+# /etc/claude-code/managed-settings.json is read natively by Claude Code.
+#
+# Run mode is selected by the CLAUDE_MODE env var, set by the consuming Agent CR
+# (e.g. sourced from a ConfigMap via podSpec.extraEnv). Default "interactive":
+#   - interactive: launch plain `claude` — a human attaches via `tmux attach -t
+#     main` and approves prompts / the first-run trust dialog (normal session).
+#   - headless: launch `claude --dangerously-skip-permissions` — for unattended
+#     runs (skips permission prompts AND the trust dialog; permitted because the
+#     image runs non-root). No human ever attaches.
+if [ "${CLAUDE_MODE:-interactive}" = "headless" ]; then
+  tmux new-session -d -s main -c /workspace 'claude --dangerously-skip-permissions' || true
+else
+  tmux new-session -d -s main -c /workspace 'claude' || true
+fi
 
 # Keep PID 1 alive on the shim; if it dies, the pod should restart.
 wait "$SHIM_PID"
