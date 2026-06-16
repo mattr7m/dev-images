@@ -15,7 +15,12 @@ on:
 
 permissions:
   contents: read
-  packages: read
+  # packages: write (not read) — the reusable build-images.yml declares
+  # `packages: write`, and a called reusable workflow cannot request more
+  # permission than the caller grants. With `read` here, GitHub rejects the call
+  # at parse time (startup_failure). PR builds use push:false, so nothing is
+  # actually pushed; this only satisfies the reusable's declared permission.
+  packages: write
   actions: read
 
 jobs:
