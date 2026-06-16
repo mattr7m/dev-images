@@ -58,7 +58,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           RC_NUM=0
           # Only consider base rc tags (vX.Y.Z-rc.N), not derivative-specific ones like -claude, -devbox
-          EXISTING=$(git tag -l "v${VERSION}-rc.*" 2>/dev/null | grep -E "^v${VERSION}-rc\.[0-9]+$" | sed 's/v[^-]*-rc//' | sort -t. -k1,1n | tail -1)
+          EXISTING=$(git tag -l "v${VERSION}-rc.*" 2>/dev/null | grep -E "^v${VERSION}-rc\.[0-9]+$" | sed 's/^v.*-rc\.//' | sort -n | tail -1)
           if [ -n "$EXISTING" ]; then
             RC_NUM=$((EXISTING + 1))
           fi
