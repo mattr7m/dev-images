@@ -24,6 +24,22 @@ while [ "$#" -gt 0 ]; do
 done
 : "${PORT:?claude-agent-boot: --port is required}"
 
+# Persistent HOME for Claude Code state. Claude keeps login/session state under
+# ~/.claude AND onboarding/trust/account state in the ~/.claude.json dotfile.
+# That dotfile lives directly under $HOME and is NOT covered by CLAUDE_CONFIG_DIR,
+# so the whole HOME must be on a persistent volume for state to survive a restart.
+#
+# We set HOME *here* (server container only) rather than via the Agent's pod-wide
+# env: a pod-wide HOME also hits the git-init sidecars, which don't have the
+# persistence volume mounted, and breaks their git auth ("failed to setup
+# authentication"). git-init never runs this script, so it keeps HOME=/tmp.
+#
+# Contract: a consuming Agent CR mounts its persistence PVC at /home/claude (see
+# kube-open-code-agent guidance/agent-templating-claude-code.md). Without a PVC
+# there this is just an ephemeral dir — no persistence, but no breakage.
+export HOME=/home/claude
+mkdir -p "$HOME" 2>/dev/null || true
+
 # Surface the bootstrap CLAUDE.md into the workspace if the controller mounted it.
 if [ -f /bootstrap/CLAUDE.md ]; then
   cp /bootstrap/CLAUDE.md /workspace/CLAUDE.md
