@@ -7,7 +7,7 @@
 # tool (e.g. bump/claude-code-v2) so the image-developer can land it as part of normal
 # Containerfile maintenance.
 
-"on":
+on:
   schedule:
     # Every Sunday at 09:00 UTC
     - cron: "0 9 * * 0"
