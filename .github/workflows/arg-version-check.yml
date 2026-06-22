@@ -66,6 +66,22 @@ jobs:
               | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tag_name','').lstrip('v'); print(t)" 2>/dev/null || echo ""
           }
 
+          # ── Helper: for Node.js, find latest patch in the same major line ──
+          # GitHub releases/latest returns the overall latest (could be a new major).
+          # For Node.js we want the latest patch within the pinned major version.
+          node_lts_latest() {
+            local current_major="$1"
+            local latest=""
+            for patch in $(seq 30 -1 0); do
+              if curl -sI "https://nodejs.org/dist/v${current_major}.${patch}/node-v${current_major}.${patch}-linux-x64.tar.gz" \
+                | head -1 | grep -q "200"; then
+                latest="${current_major}.${patch}"
+                break
+              fi
+            done
+            echo "${latest:-unavailable}"
+          }
+
           # ── Collect all (image, arg_name, current_version, source_url) tuples ──
           declare -a CHECKS=()
 
@@ -89,7 +105,9 @@ jobs:
           add_check "devbox" "YQ_VERSION" "v4.45.1" "https://api.github.com/repos/mikefarah/yq/releases/latest"
 
           # devbox-claude: node + claude-code
-          add_check "devbox-claude" "NODE_VERSION"   "22.14.0" "https://api.github.com/repos/nodejs/node/releases/latest"
+          # NOTE: NODE_VERSION uses the nodejs source identifier (not a URL) so the
+          # version lookup probes the CDN for the latest patch in the same major line.
+          add_check "devbox-claude" "NODE_VERSION"   "22.14.0" "nodejs"
           add_check "devbox-claude" "CLAUDE_CODE_VERSION" "2.1.76" "npm:@anthropic-ai/claude-code"
 
           # ── Filter by inputs ────────────────────────────────────────────────
@@ -135,6 +153,10 @@ jobs:
                 PKG="${SOURCE_URL#npm:}"
                 LATEST=$(npm_latest "$PKG")
                 ;;
+              nodejs)
+                MAJOR="${CURRENT%%.*}"
+                LATEST=$(node_lts_latest "$MAJOR")
+                ;;
               *)
                 LATEST=$(github_latest "$SOURCE_URL")
                 # Strip 'v' prefix if present
@@ -142,7 +164,7 @@ jobs:
                 ;;
             esac
 
-            [ -z "$LATEST" ] && { echo "SKIP $IMAGE/$ARG: could not resolve latest from $SOURCE_URL"; continue; }
+            [ -z "$LATEST" ] || [ "$LATEST" = "unavailable" ] && { echo "SKIP $IMAGE/$ARG: could not resolve latest from $SOURCE_URL"; continue; }
 
             if [ "$CURRENT" = "$LATEST" ]; then
               echo "OK    $IMAGE $ARG=$CURRENT (up to date)"
