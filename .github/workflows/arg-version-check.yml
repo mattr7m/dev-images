@@ -1,0 +1,209 @@
+# arg-version-check: detect when ARG pins in Containerfiles have newer upstream releases
+# and open a PR to bump them. Runs weekly (Sunday 09:00 UTC) so it doesn't race the daily
+# pre-release or candidate cut channels.
+#
+# For each image, reads the ARG values from Containerfiles, queries upstream for the latest
+# version, and opens a PR if they differ. The PR target is a feature branch named for the
+# tool (e.g. bump/claude-code-v2) so the image-developer can land it as part of normal
+# Containerfile maintenance.
+
+on:
+  schedule:
+    # Every Sunday at 09:00 UTC
+    - cron: "0 9 * * 0"
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "Limit check to a specific tool (claude-code, node, argo, gh, yq, roxctl, kubeseal, kustomize, kubecolor). Empty = all."
+        type: string
+        required: false
+        default: ""
+      image:
+        description: "Limit check to a specific image (udi-tools, udi-tools-claude, devbox, devbox-claude). Empty = all."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  detect-stale-args:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check versions and open bump PRs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LIMIT_TOOL="${{ github.event.inputs.tool }}"
+          LIMIT_IMAGE="${{ github.event.inputs.image }}"
+
+          # ── Helper: query GitHub releases for the latest tag ──────────────
+          gh_latest() {
+            local owner="$1" repo="$2"
+            curl -fsSL "https://api.github.com/repos/${owner}/${repo}/releases/latest" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" 2>/dev/null || echo ""
+          }
+
+          # ── Helper: query npm for the latest version ──────────────────────
+          npm_latest() {
+            local pkg="$1"
+            curl -fsSL "https://registry.npmjs.org/${pkg}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('dist-tags',{}).get('latest',''))" 2>/dev/null || echo ""
+          }
+
+          # ── Helper: query GitHub API for latest tag (npm-style, no v-prefix) ──
+          github_latest() {
+            local url="$1"
+            curl -fsSL "$url" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tag_name','').lstrip('v'); print(t)" 2>/dev/null || echo ""
+          }
+
+          # ── Collect all (image, arg_name, current_version, source_url) tuples ──
+          declare -a CHECKS=()
+
+          add_check() {
+            local image="$1" arg="$2" current="$3" url="$4"
+            CHECKS+=("${image}|${arg}|${current}|${url}")
+          }
+
+          # udi-tools ARGs (all from GitHub releases, stripped of v-prefix)
+          add_check "udi-tools" "ARGO_VERSION"    "3.3.0"  "https://api.github.com/repos/argoproj/argo-cd/releases/latest"
+          add_check "udi-tools" "GH_VERSION"      "2.86.0" "https://api.github.com/repos/cli/cli/releases/latest"
+          add_check "udi-tools" "ROXCTL_VERSION"  "4.9.2"  "https://api.github.com/repos/stackrox/rox/releases/latest"
+          add_check "udi-tools" "KUBESEAL_VERSION" "0.34.0" "https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest"
+          add_check "udi-tools" "KUSTOMIZE_VERSION" "5.8.1" "https://api.github.com/repos/kubernetes-sigs/kustomize/releases/latest"
+          add_check "udi-tools" "KUBECOLOR_VERSION" "0.5.3" "https://api.github.com/repos/kubecolor/kubecolor/releases/latest"
+
+          # udi-tools-claude: claude-code (npm)
+          add_check "udi-tools-claude" "CLAUDE_CODE_VERSION" "2.1.76" "npm:@anthropic-ai/claude-code"
+
+          # devbox yq (GitHub releases, strip v-prefix)
+          add_check "devbox" "YQ_VERSION" "v4.45.1" "https://api.github.com/repos/mikefarah/yq/releases/latest"
+
+          # devbox-claude: node + claude-code
+          add_check "devbox-claude" "NODE_VERSION"   "22.14.0" "https://api.github.com/repos/nodejs/node/releases/latest"
+          add_check "devbox-claude" "CLAUDE_CODE_VERSION" "2.1.76" "npm:@anthropic-ai/claude-code"
+
+          # ── Filter by inputs ────────────────────────────────────────────────
+          FILTERED=()
+          for entry in "${CHECKS[@]}"; do
+            IFS='|' read -r img arg cur url <<< "$entry"
+            TOOL=$(echo "$arg" | tr '_VERSION' '' | tr '_' '-' | sed 's/^claude-code$/claude-code/' )
+            # Normalize tool name for matching
+            case "$arg" in
+              NODE_VERSION)         TOOL="node" ;;
+              CLAUDE_CODE_VERSION)  TOOL="claude-code" ;;
+              ARGO_VERSION)         TOOL="argo" ;;
+              GH_VERSION)           TOOL="gh" ;;
+              YQ_VERSION)           TOOL="yq" ;;
+              ROXCTL_VERSION)       TOOL="roxctl" ;;
+              KUBESEAL_VERSION)     TOOL="kubeseal" ;;
+              KUSTOMIZE_VERSION)    TOOL="kustomize" ;;
+              KUBECOLOR_VERSION)    TOOL="kubecolor" ;;
+            esac
+
+            [ -n "$LIMIT_IMAGE" ] && [ "$img" != "$LIMIT_IMAGE" ] && continue
+            [ -n "$LIMIT_TOOL" ] && [ "$TOOL" != "$LIMIT_TOOL" ] && continue
+
+            FILTERED+=("$entry")
+          done
+
+          if [ ${#FILTERED[@]} -eq 0 ]; then
+            echo "No checks to run after filtering."
+            exit 0
+          fi
+
+          # ── Process each check ─────────────────────────────────────────────
+          for entry in "${FILTERED[@]}"; do
+            IFS='|' read -r IMAGE ARG CURRENT SOURCE_URL <<< "$entry"
+
+            # Look up the Containerfile path for this image
+            CF="images/${IMAGE}/Containerfile"
+            [ -f "$CF" ] || { echo "SKIP $IMAGE: no Containerfile at $CF"; continue; }
+
+            # Determine latest version from source
+            case "$SOURCE_URL" in
+              npm:*)
+                PKG="${SOURCE_URL#npm:}"
+                LATEST=$(npm_latest "$PKG")
+                ;;
+              *)
+                LATEST=$(github_latest "$SOURCE_URL")
+                # Strip 'v' prefix if present
+                LATEST="${LATEST#v}"
+                ;;
+            esac
+
+            [ -z "$LATEST" ] && { echo "SKIP $IMAGE/$ARG: could not resolve latest from $SOURCE_URL"; continue; }
+
+            if [ "$CURRENT" = "$LATEST" ]; then
+              echo "OK    $IMAGE $ARG=$CURRENT (up to date)"
+              continue
+            fi
+
+            echo "STALE $IMAGE $ARG=$CURRENT -> latest=$LATEST via $SOURCE_URL"
+
+            # ── Open a bump PR ────────────────────────────────────────────────
+            BRANCH="bump/${arg,,}-${LATEST//[^a-zA-Z0-9._-]/-}"
+            # Sanitize: lowercase, replace dots with dashes for branch name
+            BRANCH="bump/${ARG,,}-${LATEST}"
+            BRANCH=$(echo "$BRANCH" | tr '.' '-' | sed 's/--*/-/g')
+
+            git checkout -B "$BRANCH" origin/main 2>/dev/null || git checkout -B "$BRANCH" main
+
+            # Check if this PR already exists
+            EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[].number' 2>/dev/null || echo "")
+            if [ -n "$EXISTING" ]; then
+              echo "PR #$EXISTING already exists for $BRANCH — skipping."
+              git checkout main 2>/dev/null || true
+              continue
+            fi
+
+            # Bump the ARG in the Containerfile (only the first occurrence)
+            sed -i "s/^ARG ${ARG}=.*/ARG ${ARG}=\"${LATEST}\"/" "$CF"
+
+            git add "$CF"
+            git commit -m "Bump $ARG from $CURRENT to $LATEST ($IMAGE)" \
+              -m "- Current: $CURRENT
+- Latest upstream: $LATEST
+- Source: $SOURCE_URL
+- Auto-generated by arg-version-check workflow" || { echo "No changes to commit for $BRANCH"; git checkout main 2>/dev/null || true; continue; }
+
+            git push origin "$BRANCH" -f
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Bump $ARG from $CURRENT to $LATEST ($IMAGE)" \
+              --body \
+              "# Bump $ARG: $CURRENT → $LATEST
+
+## Summary
+Auto-detected a newer upstream release for \`$ARG\` in \`images/${IMAGE}/Containerfile\`.
+
+| Field | Value |
+|-------|-------|
+| Current pin | $CURRENT |
+| Latest upstream | $LATEST |
+| Source | $SOURCE_URL |
+| Image | $IMAGE |
+
+## Test plan
+- [ ] \`make lint\` passes (hadolint)
+- [ ] \`make build-${IMAGE}\` succeeds
+- [ ] Verify the tool version in the built image matches \$LATEST
+
+## Notes
+This PR was auto-generated by the \`arg-version-check.yml\` workflow.
+The maintainer reviews and merges; the image-developer validates the bump as part of normal
+candidate-channel review." 2>&1 || echo "Failed to create PR for $BRANCH"
+
+            git checkout main 2>/dev/null || true
+          done
