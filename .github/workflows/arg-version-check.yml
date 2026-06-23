@@ -1,24 +1,29 @@
-# arg-version-check: detect when ARG pins in Containerfiles have newer upstream releases
-# and open a PR to bump them. Runs weekly (Sunday 09:00 UTC) so it doesn't race the daily
-# pre-release or candidate cut channels.
+# arg-version-check: detect when ARG-pinned tool versions in the Containerfiles have
+# newer upstream releases and open one bump PR per stale pin. Weekly (Sunday 09:00 UTC)
+# so it never races the daily pre-release / candidate-cut channels; workflow_dispatch
+# for ad-hoc runs (optionally filtered to one tool and/or image).
 #
-# For each image, reads the CURRENT ARG values from the Containerfile at runtime, queries
-# upstream for the latest version, and opens a PR if they differ. Branch name is
-# bump/<tool>-<sanitized-version>.
+# CURRENT is read from each Containerfile at runtime (never hardcoded). LATEST comes
+# from the GitHub Releases API or the npm registry; Node is held to its pinned major
+# (LTS line), so we probe the CDN for the newest patch in that major.
+#
+# CHECKS CAVEAT: PRs opened with the built-in GITHUB_TOKEN do NOT trigger other
+# workflows (documented GitHub limitation), so these bump PRs will not auto-run pr.yml.
+# A maintainer kicks the checks (close/reopen, or `gh workflow run pr.yml`) before
+# merge, or the repo switches this step to a bot PAT. We do NOT fabricate a check-run.
 
 on:
   schedule:
-    # Every Sunday at 09:00 UTC
-    - cron: "0 9 * * 0"
+    - cron: "0 9 * * 0"   # Sundays 09:00 UTC
   workflow_dispatch:
     inputs:
       tool:
-        description: "Limit check to a specific tool (claude-code, node, argo, gh, yq, roxctl, kubeseal, kustomize, kubecolor). Empty = all."
+        description: "Limit to one tool (claude-code, node, argo, gh, yq, roxctl, kubeseal, kustomize, kubecolor). Empty = all."
         type: string
         required: false
         default: ""
       image:
-        description: "Limit check to a specific image (udi-tools, udi-tools-claude, devbox, devbox-claude). Empty = all."
+        description: "Limit to one image (udi-tools, udi-tools-claude, devbox, devbox-claude). Empty = all."
         type: string
         required: false
         default: ""
@@ -43,254 +48,142 @@ jobs:
 
       - name: Check versions and open bump PRs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # ── GITHUB_TOKEN workaround ───────────────────────────────────────
-          # PRs opened with GITHUB_TOKEN do not trigger other workflows
-          # (documented GitHub limitation). To ensure auto-opened bump PRs get
-          # build/lint checks from pr.yml, this workflow re-dispatches manually
-          # after creating each PR via a POST to the Checks API.
-          # Alternative considered: a bot PAT for `gh pr create` — adds
-          # secret-management overhead and is overkill for a single-repo
-          # workflow. The POST approach keeps auth minimal (repo GITHUB_TOKEN)
-          # and explicit. It is documented in this file's header comment.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          LIMIT_TOOL="${{ github.event.inputs.tool }}"
-          LIMIT_IMAGE="${{ github.event.inputs.image }}"
+          LIMIT_TOOL="${{ inputs.tool }}"
+          LIMIT_IMAGE="${{ inputs.image }}"
+          API_AUTH=(-H "Authorization: Bearer ${GH_TOKEN}")
 
-          # ── Helper: query GitHub releases API for the latest tag ────────────
-          # Returns raw tag_name (e.g. "v4.53.3" or "kustomize/v5.8.1")
+          # latest GitHub release tag, raw (e.g. v4.53.3 or kustomize/v5.8.1)
           gh_latest_tag() {
-            local url="$1"
-            curl -fsSL "$url" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || echo ""
+            curl -fsSL "${API_AUTH[@]}" "https://api.github.com/repos/$1/releases/latest" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || echo ""
           }
-
-          # ── Helper: query npm for the latest version ────────────────────────
+          # latest npm dist-tag
           npm_latest() {
-            local pkg="$1"
-            curl -fsSL "https://registry.npmjs.org/${pkg}" \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('dist-tags',{}).get('latest',''))" 2>/dev/null || echo ""
+            curl -fsSL "https://registry.npmjs.org/$1" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('dist-tags',{}).get('latest',''))" 2>/dev/null || echo ""
           }
-
-          # ── Helper: for Node.js, find latest patch in the same major line ──
-          node_lts_latest() {
-            local current_major="$1"
-            local latest=""
-            for patch in $(seq 30 -1 0); do
-              if curl -sI "https://nodejs.org/dist/v${current_major}.${patch}/node-v${current_major}.${patch}-linux-x64.tar.gz" \
-                | head -1 | grep -q "200"; then
-                latest="${current_major}.${patch}"
-                break
+          # newest Node patch within the pinned major (stay on the LTS line, don't jump majors)
+          node_latest_in_major() {
+            local major="$1" p
+            for p in $(seq 40 -1 0); do
+              if curl -sIf "https://nodejs.org/dist/v${major}.${p}/node-v${major}.${p}-linux-x64.tar.gz" >/dev/null 2>&1; then
+                echo "${major}.${p}"; return
               fi
             done
-            echo "${latest:-unavailable}"
+            echo ""
           }
-
-          # ── Helper: parse CURRENT ARG value from a Containerfile ───────────
-          # Reads the actual ARG=... line from the Containerfile; strips optional
-          # surrounding quotes. Returns empty string if ARG not found.
+          # current ARG value from a Containerfile (first match, strip optional quotes)
           read_current() {
-            local cf="$1" arg="$2"
-            grep "^ARG ${arg}=" "$cf" 2>/dev/null \
-              | head -1 \
-              | sed 's/^ARG [^=]*=[[:space:]]*//' \
-              | sed 's/^"//;s/"$//' \
-              || echo ""
+            grep "^ARG $2=" "$1" 2>/dev/null | head -1 \
+              | sed -e 's/^ARG [^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//'
           }
-
-          # ── Helper: parse LATEST from a GitHub release tag, per-tool format ─
-          # kustomize tags as "kustomize/vX.Y.Z"; roxctl (stackrox/rox) may use
-          # "rox/vX.Y.Z". Strips the repo-specific prefix and the leading 'v'.
-          parse_github_version() {
-            local raw_tag="$1" tool_name="$2"
-            if [ -z "$raw_tag" ]; then
-              echo ""
-              return
-            fi
-            # Strip known repo-specific prefixes
-            case "$tool_name" in
-              kustomize) raw_tag="${raw_tag#kustomize/}" ;;
-              roxctl)    raw_tag="${raw_tag#rox/}" ;;
+          # strip per-tool tag prefix + leading v  (kustomize/vX, rox/vX, vX -> X)
+          parse_version() {
+            local tag="$1" tool="$2"
+            [ -n "$tag" ] || { echo ""; return; }
+            case "$tool" in
+              kustomize) tag="${tag#kustomize/}" ;;
+              roxctl)    tag="${tag#rox/}" ;;
             esac
-            # Strip leading 'v'
-            echo "${raw_tag#v}"
+            echo "${tag#v}"
           }
 
-          # ── Helper: check if a bump PR already exists (open or closed/merged) ─
-          pr_exists() {
-            local branch="$1"
-            local count
-            count=$(gh pr list --head "$branch" --json number --jq '. | length' 2>/dev/null || echo "0")
-            if [ "$count" -gt 0 ]; then
-              return 0
-            fi
-            return 1
-          }
+          # tool registry:  ARG | source(github|npm|nodejs) | repo-or-pkg | display-name
+          TOOLS=(
+            "ARGO_VERSION|github|argoproj/argo-cd|argo"
+            "GH_VERSION|github|cli/cli|gh"
+            "ROXCTL_VERSION|github|stackrox/rox|roxctl"
+            "KUBESEAL_VERSION|github|bitnami-labs/sealed-secrets|kubeseal"
+            "KUSTOMIZE_VERSION|github|kubernetes-sigs/kustomize|kustomize"
+            "KUBECOLOR_VERSION|github|kubecolor/kubecolor|kubecolor"
+            "YQ_VERSION|github|mikefarah/yq|yq"
+            "CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code|claude-code"
+            "NODE_VERSION|nodejs||node"
+          )
 
-          # ── Discover images and their ARG definitions from Containerfiles ───
-          declare -a IMAGES=()
-          for img_dir in images/*/; do
-            cf="${img_dir}Containerfile"
-            if [ ! -f "$cf" ]; then
-              continue
-            fi
-            IMAGES+=("$(basename "$img_dir")")
-          done
+          STALE=0
+          for IMAGE_DIR in images/*/; do
+            CF="${IMAGE_DIR}Containerfile"; IMAGE="$(basename "$IMAGE_DIR")"
+            [ -f "$CF" ] || continue
+            [ -z "$LIMIT_IMAGE" ] || [ "$IMAGE" = "$LIMIT_IMAGE" ] || continue
 
-          # ── Tool metadata arrays (parallel, same index) ─────────────────────
-          # Each entry: ARG name, source type (github|npm|nodejs), lookup key(s), display name
-          declare -a TOOL_ARGS=()
-          declare -a TOOL_SOURCES=()
-          declare -a TOOL_KEYS1=()
-          declare -a TOOL_KEYS2=()
-          declare -a TOOL_NAMES=()
+            for ENTRY in "${TOOLS[@]}"; do
+              IFS='|' read -r ARG SOURCE REPO TOOL <<<"$ENTRY"
+              [ -z "$LIMIT_TOOL" ] || [ "$TOOL" = "$LIMIT_TOOL" ] || continue
 
-          TOOL_ARGS+=("ARGO_VERSION")       TOOL_SOURCES+=("github")    TOOL_KEYS1+=("argoproj")     TOOL_KEYS2+=("argo-cd")        TOOL_NAMES+=("argo")
-          TOOL_ARGS+=("GH_VERSION")         TOOL_SOURCES+=("github")    TOOL_KEYS1+=("cli")            TOOL_KEYS2+=("cli")            TOOL_NAMES+=("gh")
-          TOOL_ARGS+=("ROXCTL_VERSION")     TOOL_SOURCES+=("github")    TOOL_KEYS1+=("stackrox")       TOOL_KEYS2+=("rox")            TOOL_NAMES+=("roxctl")
-          TOOL_ARGS+=("KUBESEAL_VERSION")   TOOL_SOURCES+=("github")    TOOL_KEYS1+=("bitnami-labs")   TOOL_KEYS2+=("sealed-secrets")  TOOL_NAMES+=("kubeseal")
-          TOOL_ARGS+=("KUSTOMIZE_VERSION")  TOOL_SOURCES+=("github")    TOOL_KEYS1+=("kubernetes-sigs") TOOL_KEYS2+=("kustomize")      TOOL_NAMES+=("kustomize")
-          TOOL_ARGS+=("KUBECOLOR_VERSION")  TOOL_SOURCES+=("github")    TOOL_KEYS1+=("kubecolor")      TOOL_KEYS2+=("kubecolor")      TOOL_NAMES+=("kubecolor")
-          TOOL_ARGS+=("YQ_VERSION")         TOOL_SOURCES+=("github")    TOOL_KEYS1+=("mikefarah")      TOOL_KEYS2+=("yq")             TOOL_NAMES+=("yq")
-          TOOL_ARGS+=("CLAUDE_CODE_VERSION") TOOL_SOURCES+=("npm")      TOOL_KEYS1+=("@anthropic-ai/claude-code") TOOL_KEYS2+=("")  TOOL_NAMES+=("claude-code")
-          TOOL_ARGS+=("NODE_VERSION")       TOOL_SOURCES+=("nodejs")    TOOL_KEYS1+=("")               TOOL_KEYS2+=("")               TOOL_NAMES+=("node")
+              CURRENT="$(read_current "$CF" "$ARG")"
+              [ -n "$CURRENT" ] || { echo "skip  $IMAGE: no $ARG"; continue; }
 
-          # ── Process each image × tool ───────────────────────────────────────
-          for IMAGE in "${IMAGES[@]}"; do
-            CF="images/${IMAGE}/Containerfile"
-            if [ ! -f "$CF" ]; then
-              continue
-            fi
-
-            for i in "${!TOOL_ARGS[@]}"; do
-              ARG="${TOOL_ARGS[$i]}"
-              SOURCE="${TOOL_SOURCES[$i]}"
-              KEY1="${TOOL_KEYS1[$i]}"
-              KEY2="${TOOL_KEYS2[$i]}"
-              TOOL_DISPLAY="${TOOL_NAMES[$i]}"
-
-              # Filter by tool name
-              if [ -n "$LIMIT_TOOL" ] && [ "$TOOL_DISPLAY" != "$LIMIT_TOOL" ]; then
-                continue
-              fi
-
-              # Filter by image
-              if [ -n "$LIMIT_IMAGE" ] && [ "$IMAGE" != "$LIMIT_IMAGE" ]; then
-                continue
-              fi
-
-              # Read CURRENT from the Containerfile (not hardcoded)
-              CURRENT=$(read_current "$CF" "$ARG")
-              if [ -z "$CURRENT" ]; then
-                echo "SKIP $IMAGE: no $ARG found in $CF"
-                continue
-              fi
-
-              # Determine LATEST from upstream
               case "$SOURCE" in
-                npm:*)
-                  PKG="$KEY1"
-                  LATEST=$(npm_latest "$PKG")
-                  ;;
-                github)
-                  RAW_TAG=$(gh_latest_tag "https://api.github.com/repos/${KEY1}/${KEY2}/releases/latest")
-                  LATEST=$(parse_github_version "$RAW_TAG" "$TOOL_DISPLAY")
-                  ;;
-                npm)
-                  PKG="$KEY1"
-                  LATEST=$(npm_latest "$PKG")
-                  ;;
-                nodejs)
-                  MAJOR="${CURRENT%%.*}"
-                  LATEST=$(node_lts_latest "$MAJOR")
-                  ;;
-                *)
-                  echo "SKIP $IMAGE/$ARG: unknown source type '$SOURCE'"
-                  continue
-                  ;;
+                github) LATEST="$(parse_version "$(gh_latest_tag "$REPO")" "$TOOL")" ;;
+                npm)    LATEST="$(npm_latest "$REPO")" ;;
+                nodejs) LATEST="$(node_latest_in_major "${CURRENT%%.*}")" ;;
+                *)      echo "skip  $IMAGE/$ARG: unknown source '$SOURCE'"; continue ;;
+              esac
+              [ -n "$LATEST" ] || { echo "skip  $IMAGE/$ARG: no upstream version resolved"; continue; }
+
+              if [ "${CURRENT#v}" = "${LATEST#v}" ]; then
+                echo "ok    $IMAGE $ARG=$CURRENT"; continue
+              fi
+              echo "STALE $IMAGE $ARG: $CURRENT -> $LATEST"
+              STALE=$((STALE + 1))
+
+              # Preserve the Containerfile's version-prefix convention: yq is pinned
+              # as v4.45.1 (the download URL adds nothing), others bare — so a bump
+              # must keep the same shape or the build URL breaks.
+              case "$CURRENT" in
+                v*) NEW="v${LATEST#v}" ;;
+                *)  NEW="${LATEST#v}" ;;
               esac
 
-              if [ -z "$LATEST" ] || [ "$LATEST" = "unavailable" ]; then
-                echo "SKIP $IMAGE/$ARG: could not resolve latest"
-                continue
+              # printf (not echo) so no trailing newline leaks into the branch name
+              BRANCH="bump/${TOOL}-$(printf '%s' "${LATEST#v}" | tr -c 'a-zA-Z0-9._-' '-' | sed -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')"
+
+              # idempotent across ALL states: don't reopen a merged or rejected bump
+              if [ "$(gh pr list --state all --head "$BRANCH" --json number --jq 'length')" -gt 0 ]; then
+                echo "      PR for $BRANCH already exists (any state) — skipping"; continue
               fi
 
-              # Compare — both stripped of leading 'v' for consistency
-              CURRENT_STRIP="${CURRENT#v}"
-              if [ "$CURRENT_STRIP" = "$LATEST" ]; then
-                echo "OK    $IMAGE $ARG=$CURRENT (up to date)"
-                continue
-              fi
-
-              echo "STALE $IMAGE $ARG=$CURRENT -> latest=$LATEST"
-
-              # ── Open a bump PR ────────────────────────────────────────────────
-              BRANCH="bump/${TOOL_DISPLAY}-${LATEST//[^a-zA-Z0-9._-]/-}"
-              BRANCH=$(echo "$BRANCH" | sed 's/--*/-/g')
-
-              # Check idempotency: skip if PR exists (open or closed/merged)
-              if pr_exists "$BRANCH"; then
-                echo "PR for $BRANCH already exists — skipping."
-                continue
-              fi
-
-              git checkout -B "$BRANCH" origin/main 2>/dev/null || git checkout -B "$BRANCH" main
-
-              # Bump the ARG in the Containerfile (only the first occurrence)
-              sed -i "0,/^ARG ${ARG}=.*/s/^ARG ${ARG}=.*/ARG ${ARG}=\"${LATEST}\"/" "$CF"
-
+              git checkout -B "$BRANCH" origin/main
+              # bump only the first ARG occurrence; keep it quoted
+              sed -i "0,/^ARG ${ARG}=.*/s//ARG ${ARG}=\"${NEW}\"/" "$CF"
               git add "$CF"
-              if ! git commit -m "Bump $ARG from $CURRENT to $LATEST ($IMAGE)" \
-                -m "Current: $CURRENT -> $LATEST | Source: ${KEY1}/${KEY2} | Auto-generated by arg-version-check workflow" 2>/dev/null; then
-                echo "No changes to commit for $BRANCH"
-                git checkout main 2>/dev/null || true
-                continue
-              fi
+              git commit -q \
+                -m "Bump $ARG from $CURRENT to $NEW ($IMAGE)" \
+                -m "Source: $REPO. Auto-generated by arg-version-check." \
+                || { echo "      nothing to commit"; git checkout -q main; continue; }
+              git push -u origin "$BRANCH"
 
-              git push origin "$BRANCH"
+              # Build the PR body with printf into a file (no inline multi-line YAML
+              # string; single-quoted formats keep backticks literal -> no command
+              # substitution). Then pass it via --body-file.
+              {
+                printf '## Summary\n'
+                printf 'Auto-detected a newer upstream release for `%s` in `images/%s/Containerfile`.\n\n' "$ARG" "$IMAGE"
+                printf '| Field | Value |\n|-------|-------|\n'
+                printf '| Current pin | %s |\n' "$CURRENT"
+                printf '| New pin | %s |\n' "$NEW"
+                printf '| Upstream latest | %s |\n' "$LATEST"
+                printf '| Source | %s |\n' "$REPO"
+                printf '| Image | %s |\n\n' "$IMAGE"
+                printf '## Test plan\n'
+                printf -- '- [ ] `make lint` passes (hadolint)\n'
+                printf -- '- [ ] `make build-%s` succeeds\n' "$IMAGE"
+                printf -- '- [ ] the built image reports %s\n\n' "$NEW"
+                printf '## Notes\n'
+                printf 'Auto-generated by `arg-version-check.yml`. Maintainer reviews/merges; the image-developer validates the bump.\n'
+                printf 'GITHUB_TOKEN-opened PRs do not auto-run pr.yml — kick the checks (close/reopen) before merge.\n'
+              } > /tmp/pr-body.md
 
-               # Build PR body as a variable (avoids YAML '#' comment parsing in multi-line strings)
-               PR_BODY="# Bump $ARG: $CURRENT → $LATEST
+              gh pr create --base main --head "$BRANCH" \
+                --title "Bump $ARG from $CURRENT to $NEW ($IMAGE)" \
+                --body-file /tmp/pr-body.md \
+                && echo "      opened bump PR for $BRANCH"
 
-## Summary
-Auto-detected a newer upstream release for \`$ARG\` in \`images/${IMAGE}/Containerfile\`.
-
-| Field | Value |
-|-------|-------|
-| Current pin | $CURRENT |
-| Latest upstream | $LATEST |
-| Source | ${KEY1}/${KEY2} |
-| Image | $IMAGE |
-
-## Test plan
-- [ ] \`make lint\` passes (hadolint)
-- [ ] \`make build-${IMAGE}\` succeeds
-- [ ] Verify the tool version in the built image matches $LATEST
-
-## Notes
-This PR was auto-generated by the \`arg-version-check.yml\` workflow.
-The maintainer reviews and merges; the image-developer validates the bump as part of normal
-candidate-channel review."
-
-               PR_OUTPUT=$(gh pr create \
-                 --base main \
-                 --head "$BRANCH" \
-                 --title "Bump $ARG from $CURRENT to $LATEST ($IMAGE)" \
-                 --body "$PR_BODY" 2>&1) || { echo "Failed to create PR for $BRANCH"; git checkout main 2>/dev/null || true; continue; }
-
-              # Extract PR URL from gh output
-              PR_URL=$(echo "$PR_OUTPUT" | grep -o 'https://github.com/[^ ]*')
-              echo "Opened ${PR_URL}"
-
-              # Re-dispatch checks since GITHUB_TOKEN PRs don't trigger pr.yml
-              curl -fsSL \
-                -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs" \
-                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                -d "{\"name\":\"pr\",\"head_sha\":\"$(git rev-parse HEAD)\",\"status\":\"in_progress\",\"output\":{\"title\":\"Triggering build checks for $PR_URL\"}}" \
-                > /dev/null 2>&1 || true
-
-              git checkout main 2>/dev/null || true
+              git checkout -q main
             done
           done
+          echo "Done. Stale pins this run: $STALE"
