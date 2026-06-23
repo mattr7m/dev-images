@@ -68,15 +68,13 @@ jobs:
             curl -fsSL "https://registry.npmjs.org/$1" \
               | python3 -c "import sys,json;print(json.load(sys.stdin).get('dist-tags',{}).get('latest',''))" 2>/dev/null || echo ""
           }
-          # newest Node patch within the pinned major (stay on the LTS line, don't jump majors)
+          # newest Node release within the pinned major (stay on the LTS line, don't jump
+          # majors). dist/index.json is newest-first; take the first v<major>.* entry.
+          # (Node versions are 3-part — major.minor.patch — so probing a constructed URL
+          # is wrong; query the authoritative index instead.)
           node_latest_in_major() {
-            local major="$1" p
-            for p in $(seq 40 -1 0); do
-              if curl -sIf "https://nodejs.org/dist/v${major}.${p}/node-v${major}.${p}-linux-x64.tar.gz" >/dev/null 2>&1; then
-                echo "${major}.${p}"; return
-              fi
-            done
-            echo ""
+            curl -fsSL "https://nodejs.org/dist/index.json" \
+              | python3 -c "import sys,json; vs=[v['version'][1:] for v in json.load(sys.stdin) if v['version'].startswith('v$1.')]; print(vs[0] if vs else '')" 2>/dev/null || echo ""
           }
           # current ARG value from a Containerfile (first match, strip optional quotes).
           # Trailing `|| true`: when the ARG isn't in this image, grep fails and pipefail
