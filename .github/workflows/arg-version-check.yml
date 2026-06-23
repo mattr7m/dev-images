@@ -75,10 +75,14 @@ jobs:
             done
             echo ""
           }
-          # current ARG value from a Containerfile (first match, strip optional quotes)
+          # current ARG value from a Containerfile (first match, strip optional quotes).
+          # Trailing `|| true`: when the ARG isn't in this image, grep fails and pipefail
+          # would make the function return non-zero — which, in `CURRENT="$(read_current)"`
+          # under `set -e`, aborts the whole script. Always return 0; empty output means
+          # "not present" and is handled by the caller's `[ -n "$CURRENT" ]` guard.
           read_current() {
             grep "^ARG $2=" "$1" 2>/dev/null | head -1 \
-              | sed -e 's/^ARG [^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//'
+              | sed -e 's/^ARG [^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//' || true
           }
           # strip per-tool tag prefix + leading v  (kustomize/vX, rox/vX, vX -> X)
           parse_version() {
