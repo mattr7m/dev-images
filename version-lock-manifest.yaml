@@ -1,0 +1,19 @@
+version: "v0.2.0-rc.7"
+base_image:
+  reference: "quay.io/devfile/universal-developer-image:ubi9-e420701"
+  digest: "sha256:99d87fc6f1c9114db7456c419fa4556f63c1c057b6bffde57a1f7429652c7b56"
+udi-tools:
+  argo_version: "3.3.0"
+  gh_version: "2.86.0"
+  roxctl_version: "4.9.2"
+  kubeseal_version: "0.34.0"
+  kustomize_version: "5.8.1"
+  kubecolor_version: "0.5.3"
+udi-tools-claude:
+  claude_code_version: "2.1.76"
+devbox:
+  gh_version: ""
+  yq_version: "v4.45.1"
+devbox-claude:
+  node_version: "22.14.0"
+  claude_code_version: "2.1.76"
