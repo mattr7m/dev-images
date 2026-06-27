@@ -25,6 +25,7 @@ jobs:
     uses: ./.github/workflows/build-images.yml
     with:
       image: udi-tools-claude
+      base: udi-tools
       tags: nightly
       push: true
 
@@ -40,5 +41,6 @@ jobs:
     uses: ./.github/workflows/build-images.yml
     with:
       image: devbox-claude
+      base: devbox
       tags: nightly
       push: true

@@ -1,6 +1,5 @@
 # Reusable build+push engine for dev-images images.
-# Called by pr.yml, daily-prerelease.yml, cut-candidate.yml, release.yml.
-# All build steps live here — the only copy of the build logic.
+# Called by daily-prerelease.yml (each image in its own job).
 # Uses docker (not podman) to avoid disk space issues on GH Actions runners.
 
 on:
@@ -10,6 +9,11 @@ on:
         description: "Image name (udi-tools, udi-tools-claude, devbox, or devbox-claude)"
         type: string
         required: true
+      base:
+        description: "Base image short-name to pull + bare-tag for FROM resolution (derivatives only; empty for base images)"
+        type: string
+        required: false
+        default: ""
       tags:
         description: "Comma-separated list of tags to apply (first tag is used for build)"
         type: string
@@ -69,6 +73,17 @@ jobs:
           set -e
           REGISTRY=ghcr.io/${{ github.repository_owner }}
           PRIMARY="${{ steps.parse.outputs.primary }}"
+
+          # Derivatives do `FROM <base>` (a bare local name). In a separate job the base
+          # isn't in this runner's image store (a different job built + pushed it), so pull
+          # it from the registry and tag it to the bare name so FROM resolves. Pulled at the
+          # same PRIMARY tag the base job pushed (e.g. nightly). No-op for base images (base="").
+          BASE="${{ inputs.base }}"
+          if [ -n "$BASE" ]; then
+            docker pull "${REGISTRY}/${BASE}:${PRIMARY}"
+            docker tag "${REGISTRY}/${BASE}:${PRIMARY}" "${BASE}"
+          fi
+
           TAGS="-t ${REGISTRY}/${{ inputs.image }}:${PRIMARY}"
           if [ -n "${{ steps.parse.outputs.remaining }}" ]; then
             IFS=',' read -ra EXTRA_TAGS <<< "${{ steps.parse.outputs.remaining }}"

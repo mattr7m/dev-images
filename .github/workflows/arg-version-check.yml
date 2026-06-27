@@ -1,0 +1,193 @@
+# arg-version-check: detect when ARG-pinned tool versions in the Containerfiles have
+# newer upstream releases and open one bump PR per stale pin. Weekly (Sunday 09:00 UTC)
+# so it never races the daily pre-release / candidate-cut channels; workflow_dispatch
+# for ad-hoc runs (optionally filtered to one tool and/or image).
+#
+# CURRENT is read from each Containerfile at runtime (never hardcoded). LATEST comes
+# from the GitHub Releases API or the npm registry; Node is held to its pinned major
+# (LTS line), so we probe the CDN for the newest patch in that major.
+#
+# AUTH: the version-check step uses a bot PAT (secrets.BOT_PAT) for `gh`, not the
+# built-in GITHUB_TOKEN — because (a) GitHub Actions is barred from CREATING PRs with
+# GITHUB_TOKEN by org policy, and (b) PRs opened by GITHUB_TOKEN don't trigger pr.yml.
+# A bot-PAT-opened PR sidesteps both: it gets created AND runs the required checks.
+# BOT_PAT must be a repo *secret* (never a variable) with Contents:write +
+# Pull requests:write on this repo — no `workflow` scope (bumps touch Containerfiles
+# only). The git push still uses the checkout-configured GITHUB_TOKEN (contents:write).
+
+on:
+  schedule:
+    - cron: "0 9 * * 0"   # Sundays 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "Limit to one tool (claude-code, node, argo, gh, yq, roxctl, kubeseal, kustomize, kubecolor). Empty = all."
+        type: string
+        required: false
+        default: ""
+      image:
+        description: "Limit to one image (udi-tools, udi-tools-claude, devbox, devbox-claude). Empty = all."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  detect-stale-args:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set git identity
+        run: |
+          git config user.name "arg-version-check[bot]"
+          git config user.email "arg-version-check[bot]@users.noreply.github.com"
+
+      - name: Check versions and open bump PRs
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          set -euo pipefail
+          LIMIT_TOOL="${{ inputs.tool }}"
+          LIMIT_IMAGE="${{ inputs.image }}"
+          API_AUTH=(-H "Authorization: Bearer ${GH_TOKEN}")
+
+          # latest GitHub release tag, raw (e.g. v4.53.3 or kustomize/v5.8.1)
+          gh_latest_tag() {
+            curl -fsSL "${API_AUTH[@]}" "https://api.github.com/repos/$1/releases/latest" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || echo ""
+          }
+          # latest npm dist-tag
+          npm_latest() {
+            curl -fsSL "https://registry.npmjs.org/$1" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('dist-tags',{}).get('latest',''))" 2>/dev/null || echo ""
+          }
+          # newest Node release within the pinned major (stay on the LTS line, don't jump
+          # majors). dist/index.json is newest-first; take the first v<major>.* entry.
+          # (Node versions are 3-part — major.minor.patch — so probing a constructed URL
+          # is wrong; query the authoritative index instead.)
+          node_latest_in_major() {
+            curl -fsSL "https://nodejs.org/dist/index.json" \
+              | python3 -c "import sys,json; vs=[v['version'][1:] for v in json.load(sys.stdin) if v['version'].startswith('v$1.')]; print(vs[0] if vs else '')" 2>/dev/null || echo ""
+          }
+          # current ARG value from a Containerfile (first match, strip optional quotes).
+          # Trailing `|| true`: when the ARG isn't in this image, grep fails and pipefail
+          # would make the function return non-zero — which, in `CURRENT="$(read_current)"`
+          # under `set -e`, aborts the whole script. Always return 0; empty output means
+          # "not present" and is handled by the caller's `[ -n "$CURRENT" ]` guard.
+          read_current() {
+            grep "^ARG $2=" "$1" 2>/dev/null | head -1 \
+              | sed -e 's/^ARG [^=]*=[[:space:]]*//' -e 's/^"//' -e 's/"$//' || true
+          }
+          # strip per-tool tag prefix + leading v  (kustomize/vX, rox/vX, vX -> X)
+          parse_version() {
+            local tag="$1" tool="$2"
+            [ -n "$tag" ] || { echo ""; return; }
+            case "$tool" in
+              kustomize) tag="${tag#kustomize/}" ;;
+              roxctl)    tag="${tag#rox/}" ;;
+            esac
+            echo "${tag#v}"
+          }
+
+          # tool registry:  ARG | source(github|npm|nodejs) | repo-or-pkg | display-name
+          TOOLS=(
+            "ARGO_VERSION|github|argoproj/argo-cd|argo"
+            "GH_VERSION|github|cli/cli|gh"
+            "ROXCTL_VERSION|github|stackrox/rox|roxctl"
+            "KUBESEAL_VERSION|github|bitnami-labs/sealed-secrets|kubeseal"
+            "KUSTOMIZE_VERSION|github|kubernetes-sigs/kustomize|kustomize"
+            "KUBECOLOR_VERSION|github|kubecolor/kubecolor|kubecolor"
+            "YQ_VERSION|github|mikefarah/yq|yq"
+            "CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code|claude-code"
+            "NODE_VERSION|nodejs||node"
+          )
+
+          STALE=0
+          for IMAGE_DIR in images/*/; do
+            CF="${IMAGE_DIR}Containerfile"; IMAGE="$(basename "$IMAGE_DIR")"
+            [ -f "$CF" ] || continue
+            [ -z "$LIMIT_IMAGE" ] || [ "$IMAGE" = "$LIMIT_IMAGE" ] || continue
+
+            for ENTRY in "${TOOLS[@]}"; do
+              IFS='|' read -r ARG SOURCE REPO TOOL <<<"$ENTRY"
+              [ -z "$LIMIT_TOOL" ] || [ "$TOOL" = "$LIMIT_TOOL" ] || continue
+
+              CURRENT="$(read_current "$CF" "$ARG")"
+              [ -n "$CURRENT" ] || { echo "skip  $IMAGE: no $ARG"; continue; }
+
+              case "$SOURCE" in
+                github) LATEST="$(parse_version "$(gh_latest_tag "$REPO")" "$TOOL")" ;;
+                npm)    LATEST="$(npm_latest "$REPO")" ;;
+                nodejs) LATEST="$(node_latest_in_major "${CURRENT%%.*}")" ;;
+                *)      echo "skip  $IMAGE/$ARG: unknown source '$SOURCE'"; continue ;;
+              esac
+              [ -n "$LATEST" ] || { echo "skip  $IMAGE/$ARG: no upstream version resolved"; continue; }
+
+              if [ "${CURRENT#v}" = "${LATEST#v}" ]; then
+                echo "ok    $IMAGE $ARG=$CURRENT"; continue
+              fi
+              echo "STALE $IMAGE $ARG: $CURRENT -> $LATEST"
+              STALE=$((STALE + 1))
+
+              # Preserve the Containerfile's version-prefix convention: yq is pinned
+              # as v4.45.1 (the download URL adds nothing), others bare — so a bump
+              # must keep the same shape or the build URL breaks.
+              case "$CURRENT" in
+                v*) NEW="v${LATEST#v}" ;;
+                *)  NEW="${LATEST#v}" ;;
+              esac
+
+              # printf (not echo) so no trailing newline leaks into the branch name
+              BRANCH="bump/${TOOL}-$(printf '%s' "${LATEST#v}" | tr -c 'a-zA-Z0-9._-' '-' | sed -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')"
+
+              # idempotent across ALL states: don't reopen a merged or rejected bump
+              if [ "$(gh pr list --state all --head "$BRANCH" --json number --jq 'length')" -gt 0 ]; then
+                echo "      PR for $BRANCH already exists (any state) — skipping"; continue
+              fi
+
+              git checkout -B "$BRANCH" origin/main
+              # bump only the first ARG occurrence; keep it quoted
+              sed -i "0,/^ARG ${ARG}=.*/s//ARG ${ARG}=\"${NEW}\"/" "$CF"
+              git add "$CF"
+              git commit -q \
+                -m "Bump $ARG from $CURRENT to $NEW ($IMAGE)" \
+                -m "Source: $REPO. Auto-generated by arg-version-check." \
+                || { echo "      nothing to commit"; git checkout -q main; continue; }
+              git push -u origin "$BRANCH"
+
+              # Build the PR body with printf into a file (no inline multi-line YAML
+              # string; single-quoted formats keep backticks literal -> no command
+              # substitution). Then pass it via --body-file.
+              {
+                printf '## Summary\n'
+                printf 'Auto-detected a newer upstream release for `%s` in `images/%s/Containerfile`.\n\n' "$ARG" "$IMAGE"
+                printf '| Field | Value |\n|-------|-------|\n'
+                printf '| Current pin | %s |\n' "$CURRENT"
+                printf '| New pin | %s |\n' "$NEW"
+                printf '| Upstream latest | %s |\n' "$LATEST"
+                printf '| Source | %s |\n' "$REPO"
+                printf '| Image | %s |\n\n' "$IMAGE"
+                printf '## Test plan\n'
+                printf -- '- [ ] `make lint` passes (hadolint)\n'
+                printf -- '- [ ] `make build-%s` succeeds\n' "$IMAGE"
+                printf -- '- [ ] the built image reports %s\n\n' "$NEW"
+                printf '## Notes\n'
+                printf 'Auto-generated by `arg-version-check.yml`. Maintainer reviews/merges; the image-developer validates the bump.\n'
+              } > /tmp/pr-body.md
+
+              gh pr create --base main --head "$BRANCH" \
+                --title "Bump $ARG from $CURRENT to $NEW ($IMAGE)" \
+                --body-file /tmp/pr-body.md \
+                && echo "      opened bump PR for $BRANCH"
+
+              git checkout -q main
+            done
+          done
+          echo "Done. Stale pins this run: $STALE"

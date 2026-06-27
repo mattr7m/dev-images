@@ -50,7 +50,7 @@ RUN for i in $(seq 1 $RETRY_COUNT); do \
     gh --version
 
 # yq — pinned version, retry loop
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION="v4.53.3"
 RUN for i in $(seq 1 $RETRY_COUNT); do \
       curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" \
         -o /usr/local/bin/yq \
