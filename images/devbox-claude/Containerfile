@@ -15,8 +15,8 @@ LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images"
 
 # Node.js (pinned tarball — no curl|bash, satisfies the devbox network discipline)
 # Claude Code is an npm package, and the devbox base carries no Node runtime.
+ARG CLAUDE_CODE_VERSION="2.1.195"
 ARG NODE_VERSION="22.23.1"
-ARG CLAUDE_CODE_VERSION="2.1.185"
 
 USER 0
 
