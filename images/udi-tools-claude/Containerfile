@@ -6,7 +6,7 @@ FROM udi-tools
 
 LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 
-ARG CLAUDE_CODE_VERSION="2.1.76"
+ARG CLAUDE_CODE_VERSION="2.1.185"
 
 USER 0
 
