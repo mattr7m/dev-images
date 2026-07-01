@@ -97,13 +97,7 @@ SHIM_PID=$!
 if [ "${CLAUDE_MODE:-interactive}" = "headless" ]; then
   tmux new-session -d -s main -c /workspace 'claude --dangerously-skip-permissions' || true
 else
-  # Resume prior session if one exists; fall back to a fresh session on first boot.
-  (
-    set +e
-    exec claude --continue
-  ) || {
-    exec claude
-  }
+  tmux new-session -d -s main -c /workspace 'claude --continue || claude' || true
 fi
 
 # Keep PID 1 alive on the shim; if it dies, the pod should restart.
