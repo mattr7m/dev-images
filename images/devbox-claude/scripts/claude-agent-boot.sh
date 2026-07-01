@@ -83,15 +83,27 @@ SHIM_PID=$!
 #
 # Run mode is selected by the CLAUDE_MODE env var, set by the consuming Agent CR
 # (e.g. sourced from a ConfigMap via podSpec.extraEnv). Default "interactive":
-#   - interactive: launch plain `claude` — a human attaches via `tmux attach -t
-#     main` and approves prompts / the first-run trust dialog (normal session).
+#   - interactive: resume the most recent /workspace session (`claude --continue`)
+#     when one exists on disk; `--continue` exits non-zero if no prior session
+#     is found in this cwd, so we fall back to a fresh `claude` (first boot /
+#     fresh PVC). A human attaches via `tmux attach -t main` and approves prompts
+#     / the first-run trust dialog. Resume-on-restart: the HOME PVC persists
+#     ~/.claude across pod restarts, so the same conversation picks up where it
+#     left off rather than starting blank.
 #   - headless: launch `claude --dangerously-skip-permissions` — for unattended
 #     runs (skips permission prompts AND the trust dialog; permitted because the
-#     image runs non-root). No human ever attaches.
+#     image runs non-root). Always a fresh session; never resumes. No human ever
+#     attaches.
 if [ "${CLAUDE_MODE:-interactive}" = "headless" ]; then
   tmux new-session -d -s main -c /workspace 'claude --dangerously-skip-permissions' || true
 else
-  tmux new-session -d -s main -c /workspace 'claude' || true
+  # Resume prior session if one exists; fall back to a fresh session on first boot.
+  (
+    set +e
+    exec claude --continue
+  ) || {
+    exec claude
+  }
 fi
 
 # Keep PID 1 alive on the shim; if it dies, the pod should restart.
