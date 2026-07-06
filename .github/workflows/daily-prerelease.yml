@@ -44,3 +44,21 @@ jobs:
       base: devbox
       tags: nightly
       push: true
+
+  daily-build-devbox-vscode:
+    needs: daily-build-devbox
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox-vscode
+      base: devbox
+      tags: nightly
+      push: true
+
+  daily-build-devbox-claude-vscode:
+    needs: daily-build-devbox-claude
+    uses: ./.github/workflows/build-images.yml
+    with:
+      image: devbox-claude-vscode
+      base: devbox-claude
+      tags: nightly
+      push: true

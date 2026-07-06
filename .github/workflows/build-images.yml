@@ -6,7 +6,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: "Image name (udi-tools, udi-tools-claude, devbox, or devbox-claude)"
+        description: "Image name (udi-tools, udi-tools-claude, devbox, devbox-claude, devbox-vscode, or devbox-claude-vscode)"
         type: string
         required: true
       base:

@@ -1,6 +1,6 @@
 # Cut a pinned candidate: resolve base digest + pin all ARG versions,
 # commit a version lock manifest, build, push :candidate + vX.Y.Z-rc.N.
-# Supports: udi-tools, udi-tools-claude, devbox, devbox-claude.
+# Supports: udi-tools, udi-tools-claude, devbox, devbox-claude, devbox-vscode, devbox-claude-vscode.
 
 on:
   schedule:
@@ -90,6 +90,9 @@ jobs:
           NODE_VERSION=$(grep '^ARG NODE_VERSION=' "images/devbox-claude/Containerfile" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
           CLAUDE_CODE_VERSION=$(grep '^ARG CLAUDE_CODE_VERSION=' "images/devbox-claude/Containerfile" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
 
+          # devbox-vscode / devbox-claude-vscode ARGs (shared CODE_SERVER_VERSION)
+          CODE_SERVER_VERSION=$(grep '^ARG CODE_SERVER_VERSION=' "images/devbox-vscode/Containerfile" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'")
+
           echo "argo=${ARGO_VERSION}" >> $GITHUB_OUTPUT
           echo "gh=${GH_VERSION}" >> $GITHUB_OUTPUT
           echo "roxctl=${ROXCTL_VERSION}" >> $GITHUB_OUTPUT
@@ -101,6 +104,7 @@ jobs:
           echo "yq=${YQ_VERSION}" >> $GITHUB_OUTPUT
           echo "node=${NODE_VERSION}" >> $GITHUB_OUTPUT
           echo "claude_code=${CLAUDE_CODE_VERSION}" >> $GITHUB_OUTPUT
+          echo "code_server=${CODE_SERVER_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Commit version lock manifest
         id: manifest
@@ -130,6 +134,10 @@ jobs:
           devbox-claude:
             node_version: "${{ steps.args.outputs.node }}"
             claude_code_version: "${{ steps.args.outputs.claude_code }}"
+          devbox-vscode:
+            code_server_version: "${{ steps.args.outputs.code_server }}"
+          devbox-claude-vscode:
+            code_server_version: "${{ steps.args.outputs.code_server }}"
           EOF
 
           git config user.name "Image Maintainer Agent"
@@ -183,6 +191,26 @@ jobs:
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build4.log
 
+      - name: Build devbox-vscode candidate
+        id: build-devbox-vscode
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/devbox-vscode:${RC} -f images/devbox-vscode/Containerfile . >> build5.log 2>&1
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox-vscode:${RC} | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
+          tail -n 30 build5.log
+
+      - name: Build devbox-claude-vscode candidate
+        id: build-devbox-claude-vscode
+        run: |
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
+          RC="${{ steps.manifest.outputs.rc_tag }}"
+          docker build -t ${REGISTRY}/devbox-claude-vscode:${RC} -f images/devbox-claude-vscode/Containerfile . >> build6.log 2>&1
+          IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox-claude-vscode:${RC} | head -1)
+          echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
+          tail -n 30 build6.log
+
       - name: Push candidate tags
         if: steps.build-udi.outputs.image_id != '' || steps.build-devbox.outputs.image_id != ''
         run: |
@@ -233,6 +261,28 @@ jobs:
             docker push ${REGISTRY}/devbox-claude:candidate
           fi
 
+          # devbox-vscode
+          if [ -n "${{ steps.build-devbox-vscode.outputs.image_id }}" ]; then
+            VSCODE_ID="${{ steps.build-devbox-vscode.outputs.image_id }}"
+            docker tag ${VSCODE_ID} ${REGISTRY}/devbox-vscode:${RC}
+            docker tag ${VSCODE_ID} ${REGISTRY}/devbox-vscode:latest
+            docker tag ${VSCODE_ID} ${REGISTRY}/devbox-vscode:candidate
+            docker push ${REGISTRY}/devbox-vscode:${RC}
+            docker push ${REGISTRY}/devbox-vscode:latest
+            docker push ${REGISTRY}/devbox-vscode:candidate
+          fi
+
+          # devbox-claude-vscode
+          if [ -n "${{ steps.build-devbox-claude-vscode.outputs.image_id }}" ]; then
+            VSCODE_CLAUDE_ID="${{ steps.build-devbox-claude-vscode.outputs.image_id }}"
+            docker tag ${VSCODE_CLAUDE_ID} ${REGISTRY}/devbox-claude-vscode:${RC}
+            docker tag ${VSCODE_CLAUDE_ID} ${REGISTRY}/devbox-claude-vscode:latest
+            docker tag ${VSCODE_CLAUDE_ID} ${REGISTRY}/devbox-claude-vscode:candidate
+            docker push ${REGISTRY}/devbox-claude-vscode:${RC}
+            docker push ${REGISTRY}/devbox-claude-vscode:latest
+            docker push ${REGISTRY}/devbox-claude-vscode:candidate
+          fi
+
       - name: Create and push git tags
         run: |
           RC="${{ steps.manifest.outputs.rc_tag }}"
@@ -251,4 +301,11 @@ jobs:
           if [ -n "${{ steps.build-devbox-claude.outputs.image_id }}" ]; then
             git tag -a "${RC}-devbox-claude" -m "Candidate ${RC} (devbox-claude)" || true
           fi
-          git push origin "${RC}" "${RC}-claude" "${RC}-devbox" "${RC}-devbox-claude" --force-with-lease 2>/dev/null || true
+          # devbox-vscode + devbox-claude-vscode: one ghcr repo per derivative
+          if [ -n "${{ steps.build-devbox-vscode.outputs.image_id }}" ]; then
+            git tag -a "${RC}-devbox-vscode" -m "Candidate ${RC} (devbox-vscode)" || true
+          fi
+          if [ -n "${{ steps.build-devbox-claude-vscode.outputs.image_id }}" ]; then
+            git tag -a "${RC}-devbox-claude-vscode" -m "Candidate ${RC} (devbox-claude-vscode)" || true
+          fi
+          git push origin "${RC}" "${RC}-claude" "${RC}-devbox" "${RC}-devbox-claude" "${RC}-devbox-vscode" "${RC}-devbox-claude-vscode" --force-with-lease 2>/dev/null || true

@@ -43,8 +43,8 @@ jobs:
           sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           docker system prune -af --volumes 2>/dev/null || true
           df -h / | tail -1
-      - name: Build devbox + devbox-claude (no push)
-        run: make build-devbox build-devbox-claude CONTAINER_TOOL=docker
+      - name: Build devbox + devbox-claude + devbox-vscode + devbox-claude-vscode (no push)
+        run: make build-devbox build-devbox-claude build-devbox-vscode build-devbox-claude-vscode CONTAINER_TOOL=docker
 
   lint:
     runs-on: ubuntu-latest

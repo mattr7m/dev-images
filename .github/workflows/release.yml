@@ -106,6 +106,16 @@ jobs:
           docker tag ${REGISTRY}/devbox-claude:${CANDIDATE} ${REGISTRY}/devbox-claude:${CLEAN}
           docker push ${REGISTRY}/devbox-claude:${CLEAN}
 
+          # Pull devbox-vscode candidate, tag as release
+          docker pull ${REGISTRY}/devbox-vscode:${CANDIDATE}
+          docker tag ${REGISTRY}/devbox-vscode:${CANDIDATE} ${REGISTRY}/devbox-vscode:${CLEAN}
+          docker push ${REGISTRY}/devbox-vscode:${CLEAN}
+
+          # Pull devbox-claude-vscode candidate, tag as release
+          docker pull ${REGISTRY}/devbox-claude-vscode:${CANDIDATE}
+          docker tag ${REGISTRY}/devbox-claude-vscode:${CANDIDATE} ${REGISTRY}/devbox-claude-vscode:${CLEAN}
+          docker push ${REGISTRY}/devbox-claude-vscode:${CLEAN}
+
       - name: Create GitHub Release with version changes section
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,3 +164,13 @@ jobs:
           docker pull ${REGISTRY}/devbox-claude:${CLEAN}
           docker tag ${REGISTRY}/devbox-claude:${CLEAN} ${REGISTRY}/devbox-claude:latest
           docker push ${REGISTRY}/devbox-claude:latest
+
+          # devbox-vscode
+          docker pull ${REGISTRY}/devbox-vscode:${CLEAN}
+          docker tag ${REGISTRY}/devbox-vscode:${CLEAN} ${REGISTRY}/devbox-vscode:latest
+          docker push ${REGISTRY}/devbox-vscode:latest
+
+          # devbox-claude-vscode
+          docker pull ${REGISTRY}/devbox-claude-vscode:${CLEAN}
+          docker tag ${REGISTRY}/devbox-claude-vscode:${CLEAN} ${REGISTRY}/devbox-claude-vscode:latest
+          docker push ${REGISTRY}/devbox-claude-vscode:latest

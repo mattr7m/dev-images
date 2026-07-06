@@ -18,14 +18,19 @@ The build context must be the repo root (not `images/udi-tools/`) because the Co
 
 ### devbox (kubeopencode-oriented)
 
+Build the base:
+
 ```bash
 podman build -t devbox -f images/devbox/Containerfile .
 ```
 
-Build the derivative after the base:
+Build derivatives after their bases:
 
 ```bash
 podman build -t udi-tools-claude -f images/udi-tools-claude/Containerfile .
+podman build -t devbox-claude -f images/devbox-claude/Containerfile .
+podman build -t devbox-vscode -f images/devbox-vscode/Containerfile .
+podman build -t devbox-claude-vscode -f images/devbox-claude-vscode/Containerfile .
 ```
 
 The build context must be the repo root (not `images/devbox/`) because the Containerfile references files at the top level.

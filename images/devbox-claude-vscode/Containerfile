@@ -1,0 +1,33 @@
+# devbox-claude-vscode — devbox-claude derivative with code-server (VS Code in the browser).
+# Built from repo root (after both bases):
+#   podman build -t devbox-claude-vscode -f images/devbox-claude-vscode/Containerfile .
+#
+# The devbox-claude dispatcher ENTRYPOINT + claude-agent-boot.sh contract is inherited
+# unchanged. code-server on 8080 does not collide with the controller-passed server port.
+
+FROM devbox-claude
+
+LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images"
+
+# code-server — same pinned version as devbox-vscode (single source of truth).
+ARG CODE_SERVER_VERSION="4.102.0"
+
+USER 0
+
+RUN for i in $(seq 1 $RETRY_COUNT); do \
+      curl -fsSL "https://code-server.dev/install.sh" | \
+        SHELL=/bin/bash bash -s -- --version "$CODE_SERVER_VERSION" \
+      && break || { echo "code-server install retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
+    done; \
+    code-server --version
+
+# Shared launcher script (single-sourced — COPY'd from the devbox-vscode scripts dir).
+COPY images/devbox-vscode/scripts/start-code-server.sh /usr/local/bin/start-code-server.sh
+RUN chmod +x /usr/local/bin/start-code-server.sh
+
+# Expose the default code-server port.
+EXPOSE 8080
+
+# Back to the arbitrary-UID contract inherited from devbox-claude.
+USER 1000:0
+WORKDIR ${WORKSPACE_DIR}
