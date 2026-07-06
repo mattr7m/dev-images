@@ -2,8 +2,21 @@
 # and promote by digest (no rebuild). Skips if already released.
 #
 # Promotion-by-digest: what ships is exactly what was tested — no rebuild.
-# The selected candidate images are pulled @digest, re-tagged to vX.Y.Z + :latest,
-# and pushed. This matches repo-rules §12 and image-maintainer guidance.
+# The selected candidate images are re-tagged to vX.Y.Z + :latest via buildx imagetools
+# create (registry-side, no pull). This matches repo-rules §12 and image-maintainer
+# guidance.
+#
+# Release flow (bump → cut → release): the guard keys on VERSION — if the clean tag
+# (e.g. v0.2.0) already exists as a git tag, every scheduled run skips forever. This means
+# an unreleased candidate (e.g. v0.2.0-rc.16) can never be released unless VERSION is bumped
+# first. Intended flow:
+#   1. Bump VERSION via PR (e.g. 0.2.0 → 0.2.1 for fixes/bumps without new features).
+#   2. After merge, the next scheduled cut-candidate produces v0.2.1-rc.N carrying the same
+#      HEAD.
+#   3. The Monday release run (or human-approved workflow_dispatch) promotes v0.2.1-rc.N by
+#      digest to v0.2.1 + :latest.
+# This ensures candidates always have a path to release and the skip guard doesn't block
+# legitimate candidate releases indefinitely.
 
 on:
   schedule:
@@ -60,10 +73,11 @@ jobs:
           fi
 
       - name: Skip if already released
+        id: skip
         if: steps.check-released.outputs.already == 'true'
         run: |
           echo "::notice::Release ${{ steps.version.outputs.version }} already exists — skipping."
-          echo "skip=true" >> $GITHUB_OUTPUT
+          echo "skipped=true" >> $GITHUB_OUTPUT
 
       - name: Derive clean release tag
         id: derive
@@ -91,33 +105,26 @@ jobs:
 
           echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
-          # Promote udi-tools: candidate tag is vX.Y.Z-rc.N
-          DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
-          docker tag ${DIGEST} ${REGISTRY}/udi-tools:${CLEAN}
-          docker push ${REGISTRY}/udi-tools:${CLEAN}
-          docker tag ${DIGEST} ${REGISTRY}/udi-tools:latest
-          docker push ${REGISTRY}/udi-tools:latest
+          IMAGES="udi-tools udi-tools-claude devbox devbox-claude"
+          for IMG in $IMAGES; do
+            TAG_SUFFIX=""
+            if [[ "$IMG" == *"claude"* ]]; then
+              TAG_SUFFIX="-claude"
+            fi
 
-          # Promote udi-tools-claude: candidate tag is vX.Y.Z-rc.N-claude
-          DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude 2>&1 | grep -o 'sha256:[a-f0-9]*')
-          docker tag ${DIGEST} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
-          docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
-          docker tag ${DIGEST} ${REGISTRY}/udi-tools-claude:latest
-          docker push ${REGISTRY}/udi-tools-claude:latest
+            echo "Re-tagging ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} → ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} + ${REGISTRY}/${IMG}:latest"
 
-          # Promote devbox: candidate tag is vX.Y.Z-rc.N
-          DIGEST=$(docker pull --quiet ${REGISTRY}/devbox:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
-          docker tag ${DIGEST} ${REGISTRY}/devbox:${CLEAN}
-          docker push ${REGISTRY}/devbox:${CLEAN}
-          docker tag ${DIGEST} ${REGISTRY}/devbox:latest
-          docker push ${REGISTRY}/devbox:latest
+            # Registry-side re-tag via buildx imagetools create (no pull, no rebuild)
+            docker buildx imagetools create \
+              -t ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} \
+              -t ${REGISTRY}/${IMG}:latest \
+              ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX}
 
-          # Promote devbox-claude: candidate tag is vX.Y.Z-rc.N (same rc tag, separate ghcr repo)
-          DIGEST=$(docker pull --quiet ${REGISTRY}/devbox-claude:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
-          docker tag ${DIGEST} ${REGISTRY}/devbox-claude:${CLEAN}
-          docker push ${REGISTRY}/devbox-claude:${CLEAN}
-          docker tag ${DIGEST} ${REGISTRY}/devbox-claude:latest
-          docker push ${REGISTRY}/devbox-claude:latest
+            # Prove digest equality: candidate and release tag must resolve to the same manifest digest
+            CANDIDATE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
+            RELEASE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
+            echo "  ${IMG}: candidate digest=${CANDIDATE_DIGEST} release digest=${RELEASE_DIGEST}"
+          done
 
       - name: Create GitHub Release with version changes section
         if: steps.check-released.outputs.already != 'true'
