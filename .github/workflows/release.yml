@@ -1,5 +1,9 @@
 # Weekly release: pick the latest green candidate, cut a clean vX.Y.Z GitHub Release,
 # and promote by digest (no rebuild). Skips if already released.
+#
+# Promotion-by-digest: what ships is exactly what was tested — no rebuild.
+# The selected candidate images are pulled @digest, re-tagged to vX.Y.Z + :latest,
+# and pushed. This matches repo-rules §12 and image-maintainer guidance.
 
 on:
   schedule:
@@ -59,54 +63,64 @@ jobs:
         if: steps.check-released.outputs.already == 'true'
         run: |
           echo "::notice::Release ${{ steps.version.outputs.version }} already exists — skipping."
+          echo "skip=true" >> $GITHUB_OUTPUT
 
       - name: Derive clean release tag
         id: derive
+        # Only runs if not skipped
+        if: steps.check-released.outputs.already != 'true'
         run: |
           CLEAN_TAG="${{ steps.version.outputs.version }}"
           echo "clean_tag=${CLEAN_TAG}" >> $GITHUB_OUTPUT
 
-      # Must precede the build/promote steps below: they pull the private
-      # candidate images by tag, which 401s without an authenticated daemon.
       - name: Login to GHCR
+        if: steps.check-released.outputs.already != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push candidate images for release
-        id: build
+      - name: Promote candidate images by digest (no rebuild)
+        if: steps.check-released.outputs.already != 'true'
+        id: promote
         run: |
-          # Use build-images.yml reusable workflow to build all images from the candidate state
-          # We rebuild here (not promote-by-digest) because we need a clean tag for the release
-          REGISTRY=ghcr.io/${{ github.repository_owner }}
           CLEAN="${{ steps.derive.outputs.clean_tag }}"
           CANDIDATE="${{ steps.select.outputs.candidate }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
 
-          echo "Building from candidate ${CANDIDATE} → release ${CLEAN}"
+          echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
-          # Pull udi-tools candidate, tag as release
-          docker pull ${REGISTRY}/udi-tools:${CANDIDATE}
-          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN}
+          # Promote udi-tools: candidate tag is vX.Y.Z-rc.N
+          DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
+          docker tag ${DIGEST} ${REGISTRY}/udi-tools:${CLEAN}
           docker push ${REGISTRY}/udi-tools:${CLEAN}
+          docker tag ${DIGEST} ${REGISTRY}/udi-tools:latest
+          docker push ${REGISTRY}/udi-tools:latest
 
-          # Pull udi-tools-claude candidate, tag as release
-          docker pull ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude
-          docker tag ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+          # Promote udi-tools-claude: candidate tag is vX.Y.Z-rc.N-claude
+          DIGEST=$(docker pull --quiet ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude 2>&1 | grep -o 'sha256:[a-f0-9]*')
+          docker tag ${DIGEST} ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
           docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+          docker tag ${DIGEST} ${REGISTRY}/udi-tools-claude:latest
+          docker push ${REGISTRY}/udi-tools-claude:latest
 
-          # Pull devbox candidate, tag as release
-          docker pull ${REGISTRY}/devbox:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox:${CANDIDATE} ${REGISTRY}/devbox:${CLEAN}
+          # Promote devbox: candidate tag is vX.Y.Z-rc.N
+          DIGEST=$(docker pull --quiet ${REGISTRY}/devbox:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
+          docker tag ${DIGEST} ${REGISTRY}/devbox:${CLEAN}
           docker push ${REGISTRY}/devbox:${CLEAN}
+          docker tag ${DIGEST} ${REGISTRY}/devbox:latest
+          docker push ${REGISTRY}/devbox:latest
 
-          # Pull devbox-claude candidate, tag as release
-          docker pull ${REGISTRY}/devbox-claude:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox-claude:${CANDIDATE} ${REGISTRY}/devbox-claude:${CLEAN}
+          # Promote devbox-claude: candidate tag is vX.Y.Z-rc.N (same rc tag, separate ghcr repo)
+          DIGEST=$(docker pull --quiet ${REGISTRY}/devbox-claude:${CANDIDATE} 2>&1 | grep -o 'sha256:[a-f0-9]*')
+          docker tag ${DIGEST} ${REGISTRY}/devbox-claude:${CLEAN}
           docker push ${REGISTRY}/devbox-claude:${CLEAN}
+          docker tag ${DIGEST} ${REGISTRY}/devbox-claude:latest
+          docker push ${REGISTRY}/devbox-claude:latest
 
       - name: Create GitHub Release with version changes section
+        if: steps.check-released.outputs.already != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -129,28 +143,3 @@ jobs:
             echo "Release may already exist or failed to create"
             exit 1
           }
-
-      - name: Promote candidates to :latest
-        run: |
-          CLEAN="${{ steps.derive.outputs.clean_tag }}"
-          REGISTRY=ghcr.io/${{ github.repository_owner }}
-
-          # udi-tools
-          docker pull ${REGISTRY}/udi-tools:${CLEAN}
-          docker tag ${REGISTRY}/udi-tools:${CLEAN} ${REGISTRY}/udi-tools:latest
-          docker push ${REGISTRY}/udi-tools:latest
-
-          # udi-tools-claude
-          docker pull ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
-          docker tag ${REGISTRY}/udi-tools-claude:${CLEAN}-claude ${REGISTRY}/udi-tools-claude:latest
-          docker push ${REGISTRY}/udi-tools-claude:latest
-
-          # devbox
-          docker pull ${REGISTRY}/devbox:${CLEAN}
-          docker tag ${REGISTRY}/devbox:${CLEAN} ${REGISTRY}/devbox:latest
-          docker push ${REGISTRY}/devbox:latest
-
-          # devbox-claude
-          docker pull ${REGISTRY}/devbox-claude:${CLEAN}
-          docker tag ${REGISTRY}/devbox-claude:${CLEAN} ${REGISTRY}/devbox-claude:latest
-          docker push ${REGISTRY}/devbox-claude:latest
