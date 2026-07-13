@@ -8,7 +8,7 @@ LABEL Maintainer="Matt Rennebohm <m@tr5k.net>"
 
 LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images.git"
 
-ARG ARGO_VERSION="3.4.4"
+ARG ARGO_VERSION="3.4.5"
 ARG GH_VERSION="2.96.0"
 ARG ROXCTL_VERSION="4.9.2"
 ARG KUBESEAL_VERSION="0.38.4"
