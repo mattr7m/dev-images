@@ -35,7 +35,6 @@ code-server \
   --bind-addr 0.0.0.0:"$PORT" \
   --user-data-dir /tmp/.vscode-server/data \
   --extensions-dir /tmp/.vscode-server/extensions \
-  --data-dir /tmp/.vscode-server \
   /workspace &
 
 CODE_PID=$!

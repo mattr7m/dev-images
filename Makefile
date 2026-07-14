@@ -30,6 +30,7 @@ build-devbox:
 
 build-devbox-claude: build-devbox
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-claude:$(TAG) -f images/devbox-claude/Containerfile .
+	$(CONTAINER_TOOL) tag $(REGISTRY)/devbox-claude:$(TAG) devbox-claude
 
 build-devbox-vscode: build-devbox
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-vscode:$(TAG) -f images/devbox-vscode/Containerfile .

@@ -188,6 +188,8 @@ jobs:
           RC="${{ steps.manifest.outputs.rc_tag }}"
           docker build -t ${REGISTRY}/devbox-claude:${RC} -f images/devbox-claude/Containerfile . >> build4.log 2>&1
           IMAGE_ID=$(docker images --format '{{.ID}}' ${REGISTRY}/devbox-claude:${RC} | head -1)
+          # Tag as short name for derivative builds (devbox-claude-vscode uses FROM devbox-claude)
+          docker tag ${IMAGE_ID} devbox-claude
           echo "image_id=${IMAGE_ID}" >> $GITHUB_OUTPUT
           tail -n 30 build4.log
 
