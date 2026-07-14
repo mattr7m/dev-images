@@ -1,5 +1,22 @@
 # Weekly release: pick the latest green candidate, cut a clean vX.Y.Z GitHub Release,
 # and promote by digest (no rebuild). Skips if already released.
+#
+# Promotion-by-digest: what ships is exactly what was tested — no rebuild.
+# The selected candidate images are re-tagged to vX.Y.Z + :latest via buildx imagetools
+# create (registry-side, no pull). This matches repo-rules §12 and image-maintainer
+# guidance.
+#
+# Release flow (bump → cut → release): the guard keys on VERSION — if the clean tag
+# (e.g. v0.2.0) already exists as a git tag, every scheduled run skips forever. This means
+# an unreleased candidate (e.g. v0.2.0-rc.16) can never be released unless VERSION is bumped
+# first. Intended flow:
+#   1. Bump VERSION via PR (e.g. 0.2.0 → 0.2.1 for fixes/bumps without new features).
+#   2. After merge, the next scheduled cut-candidate produces v0.2.1-rc.N carrying the same
+#      HEAD.
+#   3. The Monday release run (or human-approved workflow_dispatch) promotes v0.2.1-rc.N by
+#      digest to v0.2.1 + :latest.
+# This ensures candidates always have a path to release and the skip guard doesn't block
+# legitimate candidate releases indefinitely.
 
 on:
   schedule:
@@ -56,67 +73,65 @@ jobs:
           fi
 
       - name: Skip if already released
+        id: skip
         if: steps.check-released.outputs.already == 'true'
         run: |
           echo "::notice::Release ${{ steps.version.outputs.version }} already exists — skipping."
+          echo "skipped=true" >> $GITHUB_OUTPUT
 
       - name: Derive clean release tag
         id: derive
+        # Only runs if not skipped
+        if: steps.check-released.outputs.already != 'true'
         run: |
           CLEAN_TAG="${{ steps.version.outputs.version }}"
           echo "clean_tag=${CLEAN_TAG}" >> $GITHUB_OUTPUT
 
-      # Must precede the build/promote steps below: they pull the private
-      # candidate images by tag, which 401s without an authenticated daemon.
       - name: Login to GHCR
+        if: steps.check-released.outputs.already != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push candidate images for release
-        id: build
+      - name: Promote candidate images by digest (no rebuild)
+        if: steps.check-released.outputs.already != 'true'
+        id: promote
         run: |
-          # Use build-images.yml reusable workflow to build all images from the candidate state
-          # We rebuild here (not promote-by-digest) because we need a clean tag for the release
-          REGISTRY=ghcr.io/${{ github.repository_owner }}
           CLEAN="${{ steps.derive.outputs.clean_tag }}"
           CANDIDATE="${{ steps.select.outputs.candidate }}"
+          REGISTRY=ghcr.io/${{ github.repository_owner }}
 
-          echo "Building from candidate ${CANDIDATE} → release ${CLEAN}"
+          echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
-          # Pull udi-tools candidate, tag as release
-          docker pull ${REGISTRY}/udi-tools:${CANDIDATE}
-          docker tag ${REGISTRY}/udi-tools:${CANDIDATE} ${REGISTRY}/udi-tools:${CLEAN}
-          docker push ${REGISTRY}/udi-tools:${CLEAN}
+          IMAGES="udi-tools udi-tools-claude devbox devbox-claude devbox-vscode devbox-claude-vscode"
+          for IMG in $IMAGES; do
+            TAG_SUFFIX=""
+            if [ "$IMG" = "udi-tools-claude" ]; then
+              TAG_SUFFIX="-claude"
+            fi
 
-          # Pull udi-tools-claude candidate, tag as release
-          docker pull ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude
-          docker tag ${REGISTRY}/udi-tools-claude:${CANDIDATE}-claude ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
-          docker push ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
+            echo "Re-tagging ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} → ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} + ${REGISTRY}/${IMG}:latest"
 
-          # Pull devbox candidate, tag as release
-          docker pull ${REGISTRY}/devbox:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox:${CANDIDATE} ${REGISTRY}/devbox:${CLEAN}
-          docker push ${REGISTRY}/devbox:${CLEAN}
+            # Registry-side re-tag via buildx imagetools create (no pull, no rebuild)
+            docker buildx imagetools create \
+              -t ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} \
+              -t ${REGISTRY}/${IMG}:latest \
+              ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX}
 
-          # Pull devbox-claude candidate, tag as release
-          docker pull ${REGISTRY}/devbox-claude:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox-claude:${CANDIDATE} ${REGISTRY}/devbox-claude:${CLEAN}
-          docker push ${REGISTRY}/devbox-claude:${CLEAN}
-
-          # Pull devbox-vscode candidate, tag as release
-          docker pull ${REGISTRY}/devbox-vscode:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox-vscode:${CANDIDATE} ${REGISTRY}/devbox-vscode:${CLEAN}
-          docker push ${REGISTRY}/devbox-vscode:${CLEAN}
-
-          # Pull devbox-claude-vscode candidate, tag as release
-          docker pull ${REGISTRY}/devbox-claude-vscode:${CANDIDATE}
-          docker tag ${REGISTRY}/devbox-claude-vscode:${CANDIDATE} ${REGISTRY}/devbox-claude-vscode:${CLEAN}
-          docker push ${REGISTRY}/devbox-claude-vscode:${CLEAN}
+            # Prove digest equality: candidate and release tag must resolve to the same manifest digest
+            CANDIDATE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
+            RELEASE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
+            if [ "$CANDIDATE_DIGEST" != "$RELEASE_DIGEST" ] || [ "$CANDIDATE_DIGEST" = "N/A" ]; then
+              echo "::error::digest mismatch for ${IMG}: candidate=${CANDIDATE_DIGEST} release=${RELEASE_DIGEST}"
+              exit 1
+            fi
+            echo "  ${IMG}: candidate digest=${CANDIDATE_DIGEST} release digest=${RELEASE_DIGEST}"
+          done
 
       - name: Create GitHub Release with version changes section
+        if: steps.check-released.outputs.already != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -139,38 +154,3 @@ jobs:
             echo "Release may already exist or failed to create"
             exit 1
           }
-
-      - name: Promote candidates to :latest
-        run: |
-          CLEAN="${{ steps.derive.outputs.clean_tag }}"
-          REGISTRY=ghcr.io/${{ github.repository_owner }}
-
-          # udi-tools
-          docker pull ${REGISTRY}/udi-tools:${CLEAN}
-          docker tag ${REGISTRY}/udi-tools:${CLEAN} ${REGISTRY}/udi-tools:latest
-          docker push ${REGISTRY}/udi-tools:latest
-
-          # udi-tools-claude
-          docker pull ${REGISTRY}/udi-tools-claude:${CLEAN}-claude
-          docker tag ${REGISTRY}/udi-tools-claude:${CLEAN}-claude ${REGISTRY}/udi-tools-claude:latest
-          docker push ${REGISTRY}/udi-tools-claude:latest
-
-          # devbox
-          docker pull ${REGISTRY}/devbox:${CLEAN}
-          docker tag ${REGISTRY}/devbox:${CLEAN} ${REGISTRY}/devbox:latest
-          docker push ${REGISTRY}/devbox:latest
-
-          # devbox-claude
-          docker pull ${REGISTRY}/devbox-claude:${CLEAN}
-          docker tag ${REGISTRY}/devbox-claude:${CLEAN} ${REGISTRY}/devbox-claude:latest
-          docker push ${REGISTRY}/devbox-claude:latest
-
-          # devbox-vscode
-          docker pull ${REGISTRY}/devbox-vscode:${CLEAN}
-          docker tag ${REGISTRY}/devbox-vscode:${CLEAN} ${REGISTRY}/devbox-vscode:latest
-          docker push ${REGISTRY}/devbox-vscode:latest
-
-          # devbox-claude-vscode
-          docker pull ${REGISTRY}/devbox-claude-vscode:${CLEAN}
-          docker tag ${REGISTRY}/devbox-claude-vscode:${CLEAN} ${REGISTRY}/devbox-claude-vscode:latest
-          docker push ${REGISTRY}/devbox-claude-vscode:latest
