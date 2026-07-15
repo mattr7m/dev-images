@@ -43,8 +43,24 @@ jobs:
           sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           docker system prune -af --volumes 2>/dev/null || true
           df -h / | tail -1
-      - name: Build devbox + devbox-claude (no push)
-        run: make build-devbox build-devbox-claude CONTAINER_TOOL=docker
+      - name: Build devbox + devbox-claude + devbox-vscode + devbox-claude-vscode (no push)
+        run: make build-devbox build-devbox-claude build-devbox-vscode build-devbox-claude-vscode CONTAINER_TOOL=docker
+      - name: Smoke test devbox-vscode + devbox-claude-vscode
+        run: |
+          set -euo pipefail
+          for IMG in devbox-vscode devbox-claude-vscode; do
+            echo "== smoke: $IMG =="
+            docker run --rm --user 1000 --entrypoint code-server localhost/$IMG:latest --version
+            docker run -d --name smoke-$IMG --user 1000 --entrypoint sleep localhost/$IMG:latest 600
+            docker exec smoke-$IMG start-code-server.sh
+            ok=""
+            for i in $(seq 1 15); do
+              docker exec smoke-$IMG curl -fsS http://127.0.0.1:8080/healthz && ok=1 && break || sleep 2
+            done
+            [ -n "$ok" ] || { echo "::error::$IMG healthz never came up"; exit 1; }
+            docker exec smoke-$IMG start-code-server.sh | grep -q "already running"
+            docker rm -f smoke-$IMG
+          done
 
   lint:
     runs-on: ubuntu-latest

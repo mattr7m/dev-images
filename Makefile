@@ -6,7 +6,7 @@ REGISTRY ?= localhost
 TAG ?= latest
 CONTAINER_TOOL ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 
-IMAGES := udi-tools udi-tools-claude devbox devbox-claude
+IMAGES := udi-tools udi-tools-claude devbox devbox-claude devbox-vscode devbox-claude-vscode
 
 .PHONY: build-all lint push-all clean
 
@@ -30,8 +30,15 @@ build-devbox:
 
 build-devbox-claude: build-devbox
 	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-claude:$(TAG) -f images/devbox-claude/Containerfile .
+	$(CONTAINER_TOOL) tag $(REGISTRY)/devbox-claude:$(TAG) devbox-claude
 
-build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-claude
+build-devbox-vscode: build-devbox
+	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-vscode:$(TAG) -f images/devbox-vscode/Containerfile .
+
+build-devbox-claude-vscode: build-devbox-claude
+	$(CONTAINER_TOOL) build -t $(REGISTRY)/devbox-claude-vscode:$(TAG) -f images/devbox-claude-vscode/Containerfile .
+
+build-all: build-udi-tools build-udi-tools-claude build-devbox build-devbox-claude build-devbox-vscode build-devbox-claude-vscode
 
 # ── Lint ───────────────────────────────────────────────────────
 
@@ -76,7 +83,23 @@ endif
 	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-claude:$(TAG) || true
 	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-claude:latest || true
 
-push-all: push-udi-tools push-udi-tools-claude push-devbox push-devbox-claude
+push-devbox-vscode:
+ifndef REGISTRY
+	$(error REGISTRY is required to push images. Set REGISTRY=ghcr.io/mattr7m)
+endif
+	$(CONTAINER_TOOL) tag $(REGISTRY)/devbox-vscode:$(TAG) $(REGISTRY)/devbox-vscode:latest || true
+	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-vscode:$(TAG) || true
+	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-vscode:latest || true
+
+push-devbox-claude-vscode:
+ifndef REGISTRY
+	$(error REGISTRY is required to push images. Set REGISTRY=ghcr.io/mattr7m)
+endif
+	$(CONTAINER_TOOL) tag $(REGISTRY)/devbox-claude-vscode:$(TAG) $(REGISTRY)/devbox-claude-vscode:latest || true
+	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-claude-vscode:$(TAG) || true
+	$(CONTAINER_TOOL) push $(REGISTRY)/devbox-claude-vscode:latest || true
+
+push-all: push-udi-tools push-udi-tools-claude push-devbox push-devbox-claude push-devbox-vscode push-devbox-claude-vscode
 
 # ── Clean ──────────────────────────────────────────────────────
 

@@ -105,10 +105,10 @@ jobs:
 
           echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
-          IMAGES="udi-tools udi-tools-claude devbox devbox-claude"
+          IMAGES="udi-tools udi-tools-claude devbox devbox-claude devbox-vscode devbox-claude-vscode"
           for IMG in $IMAGES; do
             TAG_SUFFIX=""
-            if [[ "$IMG" == *"claude"* ]]; then
+            if [ "$IMG" = "udi-tools-claude" ]; then
               TAG_SUFFIX="-claude"
             fi
 
@@ -123,6 +123,10 @@ jobs:
             # Prove digest equality: candidate and release tag must resolve to the same manifest digest
             CANDIDATE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
             RELEASE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
+            if [ "$CANDIDATE_DIGEST" != "$RELEASE_DIGEST" ] || [ "$CANDIDATE_DIGEST" = "N/A" ]; then
+              echo "::error::digest mismatch for ${IMG}: candidate=${CANDIDATE_DIGEST} release=${RELEASE_DIGEST}"
+              exit 1
+            fi
             echo "  ${IMG}: candidate digest=${CANDIDATE_DIGEST} release digest=${RELEASE_DIGEST}"
           done
 

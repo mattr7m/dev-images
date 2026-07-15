@@ -1,0 +1,34 @@
+# devbox-vscode — devbox derivative with code-server (VS Code in the browser)
+# Built from repo root (after the base):
+#   podman build -t devbox-vscode -f images/devbox-vscode/Containerfile .
+#
+# Follows the kubeopencode VS Code-in-Browser guide:
+#   https://kubeopencode.github.io/kubeopencode/docs/use-cases/vscode-in-browser
+
+FROM devbox
+
+LABEL org.opencontainers.image.source="https://github.com/mattr7m/dev-images"
+
+# code-server — pinned version (upstream install.sh defaults to latest, so we pass
+# --version explicitly). Retry-loop the network fetch; no unpinned refs.
+ARG CODE_SERVER_VERSION="4.102.0"
+
+USER 0
+
+RUN for i in $(seq 1 $RETRY_COUNT); do \
+      curl -fsSL "https://code-server.dev/install.sh" | \
+        SHELL=/bin/bash bash -s -- --version "$CODE_SERVER_VERSION" \
+      && break || { echo "code-server install retry $i/$RETRY_COUNT, waiting ${RETRY_DELAY}s..."; sleep $RETRY_DELAY; }; \
+    done; \
+    code-server --version
+
+# Shared launcher script (single-sourced — COPY'd into both -vscode derivatives).
+COPY images/devbox-vscode/scripts/start-code-server.sh /usr/local/bin/start-code-server.sh
+RUN chmod +x /usr/local/bin/start-code-server.sh
+
+# Expose the default code-server port.
+EXPOSE 8080
+
+# Back to the arbitrary-UID contract inherited from devbox.
+USER 1000:0
+WORKDIR ${WORKSPACE_DIR}
