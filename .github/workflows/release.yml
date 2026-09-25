@@ -120,14 +120,16 @@ jobs:
               -t ${REGISTRY}/${IMG}:latest \
               ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX}
 
-            # Prove digest equality: candidate and release tag must resolve to the same manifest digest
-            CANDIDATE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
-            RELEASE_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null || echo "N/A")
-            if [ "$CANDIDATE_DIGEST" != "$RELEASE_DIGEST" ] || [ "$CANDIDATE_DIGEST" = "N/A" ]; then
-              echo "::error::digest mismatch for ${IMG}: candidate=${CANDIDATE_DIGEST} release=${RELEASE_DIGEST}"
+            # Prove digest equality: imagetools create writes a NEW list manifest
+            # per tag, so {{.Manifest.Digest}} differs by construction. Compare the
+            # child image-manifest digests instead — those must be identical.
+            CANDIDATE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null)
+            RELEASE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null)
+            if [ -z "$CANDIDATE_DIGESTS" ] || [ "$CANDIDATE_DIGESTS" != "$RELEASE_DIGESTS" ]; then
+              echo "::error::digest mismatch for ${IMG}: candidate='${CANDIDATE_DIGESTS}' release='${RELEASE_DIGESTS}'"
               exit 1
             fi
-            echo "  ${IMG}: candidate digest=${CANDIDATE_DIGEST} release digest=${RELEASE_DIGEST}"
+            echo "  ${IMG}: promoted image digests=${CANDIDATE_DIGESTS% }"
           done
 
       - name: Create GitHub Release with version changes section
