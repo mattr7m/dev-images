@@ -64,6 +64,15 @@ jobs:
             echo "::error::No candidate tags found for version ${{ steps.version.outputs.version }}"
             exit 1
           fi
+          # Validate the resolved candidate is a base rc tag (vX.Y.Z-rc.N). Guards the
+          # explicit-input path: a workflow_dispatch that passes the RELEASE version
+          # (e.g. candidate_tag=0.2.1) bypasses auto-selection and otherwise fails
+          # mid-promote with a confusing "tag not found" — see run 36133170765. Fail
+          # early and clearly instead. Leave candidate_tag BLANK to auto-select.
+          if ! echo "$CANDIDATE" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$"; then
+            echo "::error::candidate_tag '${CANDIDATE}' is not a base rc tag (expected vX.Y.Z-rc.N). Leave the input blank to auto-select the latest rc, or pass an explicit rc tag."
+            exit 1
+          fi
           echo "candidate=${CANDIDATE}" >> $GITHUB_OUTPUT
 
       - name: Check if already released
