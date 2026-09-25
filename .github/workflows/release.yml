@@ -109,18 +109,15 @@ jobs:
 
           echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
-          # cut-candidate pushes/creates one tag per image with a per-image suffix
-          # (udi-tools-claude → -claude, devbox-* → -devbox[-claude] / -devbox-vscode
-          # [-claude]); the base images are bare vX.Y.Z-rc.N.
+          # cut-candidate pushes each image to its own ghcr repo tagged with the
+          # bare vX.Y.Z-rc.N — one ghcr repo per derivative — except udi-tools-claude,
+          # which is the -claude suffix on the udi-tools family (see cut-candidate's
+          # "Push candidate tags" step). The -devbox* suffixed names are git tags only.
           IMAGES="udi-tools udi-tools-claude devbox devbox-claude devbox-vscode devbox-claude-vscode"
           for IMG in $IMAGES; do
             case "$IMG" in
-              udi-tools) TAG_SUFFIX="" ;;
               udi-tools-claude) TAG_SUFFIX="-claude" ;;
-              devbox) TAG_SUFFIX="-devbox" ;;
-              devbox-claude) TAG_SUFFIX="-devbox-claude" ;;
-              devbox-vscode) TAG_SUFFIX="-devbox-vscode" ;;
-              devbox-claude-vscode) TAG_SUFFIX="-devbox-claude-vscode" ;;
+              *)                TAG_SUFFIX="" ;;
             esac
 
             echo "Re-tagging ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} → ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} + ${REGISTRY}/${IMG}:latest"
