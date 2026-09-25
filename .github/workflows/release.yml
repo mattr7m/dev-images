@@ -54,7 +54,11 @@ jobs:
           CANDIDATE="${{ github.event.inputs.candidate_tag }}"
           if [ -z "$CANDIDATE" ]; then
             VERSION="${{ steps.version.outputs.version }}"
-            CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | sort -V | tail -1)
+            # Base tags only (vX.Y.Z-rc.N): cut-candidate creates one base tag per
+            # image plus derivative-specific suffixed tags (-claude, -devbox, ...),
+            # and each image's registry tag carries its own suffix — a release promotes
+            # the whole rc set, so selection must key on the base tag.
+            CANDIDATE=$(git tag -l "v${VERSION}-rc.*" | grep -E "^v${VERSION}-rc\.[0-9]+$" | sort -V | tail -1)
           fi
           if [ -z "$CANDIDATE" ]; then
             echo "::error::No candidate tags found for version ${{ steps.version.outputs.version }}"
@@ -105,14 +109,24 @@ jobs:
 
           echo "Promoting candidate ${CANDIDATE} → release ${CLEAN} (by digest, no rebuild)"
 
+          # cut-candidate pushes each image to its own ghcr repo tagged with the
+          # bare vX.Y.Z-rc.N — one ghcr repo per derivative — except udi-tools-claude,
+          # which is the -claude suffix on the udi-tools family (see cut-candidate's
+          # "Push candidate tags" step). The -devbox* suffixed names are git tags only.
           IMAGES="udi-tools udi-tools-claude devbox devbox-claude devbox-vscode devbox-claude-vscode"
           for IMG in $IMAGES; do
-            TAG_SUFFIX=""
-            if [ "$IMG" = "udi-tools-claude" ]; then
-              TAG_SUFFIX="-claude"
-            fi
+            case "$IMG" in
+              udi-tools-claude) TAG_SUFFIX="-claude" ;;
+              *)                TAG_SUFFIX="" ;;
+            esac
 
             echo "Re-tagging ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} → ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} + ${REGISTRY}/${IMG}:latest"
+
+            # Fail fast with a clear message if this image's candidate tag is missing
+            if ! docker buildx imagetools inspect ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} >/dev/null 2>&1; then
+              echo "::error::candidate tag not found: ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX}"
+              exit 1
+            fi
 
             # Registry-side re-tag via buildx imagetools create (no pull, no rebuild)
             docker buildx imagetools create \
