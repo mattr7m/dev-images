@@ -123,8 +123,8 @@ jobs:
             # Prove digest equality: imagetools create writes a NEW list manifest
             # per tag, so {{.Manifest.Digest}} differs by construction. Compare the
             # child image-manifest digests instead — those must be identical.
-            CANDIDATE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null)
-            RELEASE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null)
+            CANDIDATE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null)
+            RELEASE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null)
             if [ -z "$CANDIDATE_DIGESTS" ] || [ "$CANDIDATE_DIGESTS" != "$RELEASE_DIGESTS" ]; then
               echo "::error::digest mismatch for ${IMG}: candidate='${CANDIDATE_DIGESTS}' release='${RELEASE_DIGESTS}'"
               exit 1
