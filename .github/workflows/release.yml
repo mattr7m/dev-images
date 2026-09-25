@@ -134,16 +134,21 @@ jobs:
               -t ${REGISTRY}/${IMG}:latest \
               ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX}
 
-            # Prove digest equality: imagetools create writes a NEW list manifest
-            # per tag, so {{.Manifest.Digest}} differs by construction. Compare the
-            # child image-manifest digests instead — those must be identical.
-            CANDIDATE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null)
-            RELEASE_DIGESTS=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null)
-            if [ -z "$CANDIDATE_DIGESTS" ] || [ "$CANDIDATE_DIGESTS" != "$RELEASE_DIGESTS" ]; then
-              echo "::error::digest mismatch for ${IMG}: candidate='${CANDIDATE_DIGESTS}' release='${RELEASE_DIGESTS}'"
+            # Prove promotion, no rebuild. The candidate is a single-arch PLAIN
+            # manifest (cut-candidate uses docker build + push, not a multi-arch
+            # buildx build); `imagetools create` wraps it in an index for the release
+            # tag. So {{range .Manifest.Manifests}} errors on the plain candidate
+            # manifest (no .Manifests field) — with `set -e` + 2>/dev/null that was a
+            # silent exit 1 (run 36135463654). Instead compare the candidate's own
+            # manifest digest against the release index's child digest(s): create is a
+            # by-digest re-tag, so the candidate manifest must appear in the release.
+            CAND_DIGEST=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' ${REGISTRY}/${IMG}:${CANDIDATE}${TAG_SUFFIX} 2>/dev/null || true)
+            REL_CHILDREN=$(docker buildx imagetools inspect --format '{{range .Manifest.Manifests}}{{println .Digest}}{{end}}' ${REGISTRY}/${IMG}:${CLEAN}${TAG_SUFFIX} 2>/dev/null || true)
+            if [ -z "$CAND_DIGEST" ] || ! printf '%s\n' "$REL_CHILDREN" | grep -qxF "$CAND_DIGEST"; then
+              echo "::error::promotion check failed for ${IMG}: candidate manifest '${CAND_DIGEST:-<empty>}' not found in release index children '$(echo $REL_CHILDREN)'"
               exit 1
             fi
-            echo "  ${IMG}: promoted image digests=${CANDIDATE_DIGESTS% }"
+            echo "  ${IMG}: promoted (candidate manifest ${CAND_DIGEST} present in release index)"
           done
 
       - name: Create GitHub Release with version changes section
